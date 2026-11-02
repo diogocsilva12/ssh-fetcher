@@ -102,7 +102,7 @@
       const want = select || (prev && parent(prev) === S.cwd ? prev : null);
       const idx = want ? S.rows.findIndex((r) => r.path === want) : -1;
       setCursor(idx >= 0 ? idx : (S.rows.length > 1 ? 1 : 0), { select: idx >= 0, scroll: true, preview: false });
-      localStorage.setItem("sshf-last", S.cwd);
+      localStorage.setItem("sshf-last-" + S.info?.host, S.cwd);
       return true;
     } catch (e) {
       toast(e.message, "bad");
@@ -892,23 +892,53 @@
   })();
 
   // ------------------------------------------------------------------ boot
+  async function applyInfo(info) {
+    S.info = info;
+    if (!info.connected) {
+      $("hostLabel").textContent = `${info.host}: ${info.error || "disconnected"}`;
+      $("connDot").className = "dot bad";
+      return;
+    }
+    $("connDot").className = "dot ok";
+    $("hostLabel").textContent = `${info.user}@${info.host} ▾`;
+    $("hostLabel").title = `${info.hostname} — click to switch SSH host`;
+    $("hostLabel").style.cursor = "pointer";
+    $("dlDir").textContent = tilde2(info.download_dir);
+    S.back = []; S.fwd = [];
+    S.cwd = info.home;
+    clearPreview();
+    renderBookmarks();
+    const last = localStorage.getItem("sshf-last-" + info.host);
+    if (!(last && (await go(last, { push: false })))) await go(info.home, { push: false });
+    $("tableWrap").focus();
+  }
+
+  $("hostLabel").onclick = async () => {
+    const hosts = (S.info?.hosts || []).join(", ");
+    const next = prompt(`Switch SSH host (from ~/.ssh/config: ${hosts}):`, S.info?.host || "deucalion");
+    if (!next || next.trim() === S.info?.host) return;
+    $("hostLabel").textContent = `connecting to ${next.trim()}…`;
+    $("connDot").className = "dot";
+    busy(true);
+    try {
+      const info = await api("/api/host", { method: "POST", body: { host: next.trim() } });
+      await applyInfo(info);
+    } catch (e) {
+      toast(e.message, "bad");
+      if (S.info) await applyInfo(S.info);
+    } finally {
+      busy(false);
+    }
+  };
+
   async function boot() {
     if (!TOKEN) { document.body.innerHTML = `<div class="placeholder" style="padding:60px;text-align:center">Missing access token — open the URL printed by <code>server.py</code>.</div>`; return; }
     try {
-      S.info = await api("/api/info");
+      const info = await api("/api/info");
+      await applyInfo(info);
     } catch (e) {
       $("hostLabel").textContent = "error: " + e.message; $("connDot").className = "dot bad"; return;
     }
-    if (!S.info.connected) { $("hostLabel").textContent = `${S.info.host}: ${S.info.error}`; $("connDot").className = "dot bad"; return; }
-    $("connDot").className = "dot ok";
-    $("hostLabel").textContent = `${S.info.user}@${S.info.host}`;
-    $("hostLabel").title = S.info.hostname;
-    $("dlDir").textContent = tilde2(S.info.download_dir);
-    S.cwd = S.info.home;
-    renderBookmarks();
-    const last = localStorage.getItem("sshf-last");
-    if (!(last && (await go(last, { push: false })))) await go(S.info.home, { push: false });
-    $("tableWrap").focus();
     pollJobs();
   }
   boot();

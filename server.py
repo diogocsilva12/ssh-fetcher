@@ -45,9 +45,27 @@ MEDIA_EXT = {
 CFG = {
     "host": "deucalion",
     "download_dir": str(Path.home() / "Downloads" / "deucalion"),
+    "custom_dl": False,
 }
 TOKEN = secrets.token_urlsafe(24)
 CONTROL_PATH = f"/tmp/sshfetch-{os.getuid()}-%C"
+
+
+def list_ssh_hosts():
+    hosts = []
+    cfg_path = Path.home() / ".ssh" / "config"
+    if cfg_path.is_file():
+        for raw in cfg_path.read_text("utf-8", "replace").splitlines():
+            line = raw.split("#", 1)[0].strip()
+            if line.lower().startswith("host "):
+                for tok in line.split()[1:]:
+                    if any(c in tok for c in "*?!") or tok.lower() in ("github", "github.com", "gitlab", "gitlab.com", "bitbucket.org"):
+                        continue
+                    if tok not in hosts:
+                        hosts.append(tok)
+    if CFG["host"] not in hosts:
+        hosts.insert(0, CFG["host"])
+    return hosts
 
 
 def ssh_opts(batch=True):
@@ -528,6 +546,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/save": lambda: self.api_save(b["path"], b["content"]),
                 "/api/exec": lambda: self.api_exec(b.get("cwd", "~"), b["cmd"]),
                 "/api/config": lambda: self.api_config(b),
+                "/api/host": lambda: self.api_switch_host(b["host"]),
                 "/api/reveal": lambda: self.api_reveal(b["path"]),
                 "/api/open_terminal": lambda: self.api_open_terminal(b["path"]),
                 "/api/open_vscode": lambda: self.api_open_vscode(b["path"], b.get("isDir", True)),
@@ -561,7 +580,7 @@ class Handler(BaseHTTPRequestHandler):
     def api_info(self):
         code, out, err = run_remote('echo "$HOME"; hostname; whoami', timeout=20)
         if code != 0:
-            return self.send_json({"connected": False, "error": err.strip(), "host": CFG["host"]})
+            return self.send_json({"connected": False, "error": err.strip(), "host": CFG["host"], "hosts": list_ssh_hosts()})
         home, hostname, user = (out.strip().splitlines() + ["", "", ""])[:3]
         # turn `alias foo='cd /some/dir'` lines from ~/.bashrc into bookmarks
         aliases = []
@@ -576,7 +595,8 @@ class Handler(BaseHTTPRequestHandler):
                     aliases.append({"name": name, "path": target.replace("~", home, 1) if target.startswith("~") else target})
             except Exception:
                 pass
-        self.send_json({"connected": True, "host": CFG["host"], "home": home, "aliases": aliases,
+        self.send_json({"connected": True, "host": CFG["host"], "hosts": list_ssh_hosts(),
+                        "home": home, "aliases": aliases,
                         "hostname": hostname, "user": user,
                         "download_dir": CFG["download_dir"], "platform": sys.platform})
 
@@ -733,7 +753,24 @@ class Handler(BaseHTTPRequestHandler):
             d = Path(b["download_dir"]).expanduser()
             d.mkdir(parents=True, exist_ok=True)
             CFG["download_dir"] = str(d)
+            CFG["custom_dl"] = True
         self.send_json({"download_dir": CFG["download_dir"]})
+
+    def api_switch_host(self, host):
+        host = host.strip()
+        if not host:
+            return self.err("empty host")
+        POOL.close()
+        CFG["host"] = host
+        if not CFG["custom_dl"]:
+            safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in host)
+            CFG["download_dir"] = str(Path.home() / "Downloads" / safe)
+        ensure_master()
+        try:
+            POOL.warm(1)
+        except Exception:
+            pass
+        return self.api_info()
 
     def api_reveal(self, path):
         p = Path(path).expanduser()
@@ -827,13 +864,18 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     ap = argparse.ArgumentParser(description="GUI file browser over SSH")
-    ap.add_argument("--host", default=CFG["host"], help="ssh host alias (default: deucalion)")
+    ap.add_argument("--host", default=CFG["host"], help="ssh host alias or user@host (default: deucalion)")
     ap.add_argument("--port", type=int, default=8765)
-    ap.add_argument("--download-dir", default=CFG["download_dir"])
+    ap.add_argument("--download-dir", default=None, help="local download directory (default: ~/Downloads/<host>)")
     ap.add_argument("--no-browser", action="store_true")
     a = ap.parse_args()
     CFG["host"] = a.host
-    CFG["download_dir"] = str(Path(a.download_dir).expanduser())
+    if a.download_dir:
+        CFG["download_dir"] = str(Path(a.download_dir).expanduser())
+        CFG["custom_dl"] = True
+    else:
+        safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in a.host)
+        CFG["download_dir"] = str(Path.home() / "Downloads" / safe)
 
     if not ensure_master():
         print(f"[ssh-fetcher] could not connect to {a.host}", file=sys.stderr)
