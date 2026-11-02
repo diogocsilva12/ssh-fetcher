@@ -1,0 +1,6 @@
+#!/bin/zsh
+# Launch the ssh-fetcher GUI. Usage: ./ssh-fetcher [host-alias] [extra server.py args]
+DIR="${0:A:h}"
+HOST="${1:-deucalion}"
+[[ $# -gt 0 ]] && shift
+exec python3 "$DIR/server.py" --host "$HOST" "$@"

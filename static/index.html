@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ssh-fetcher</title>
+  <link rel="stylesheet" href="/style.css" />
+  <!-- Optional enhancements (app works without them if offline) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/highlight.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot" id="connDot"></span>
+      <span id="hostLabel">connecting…</span>
+    </div>
+    <div class="nav">
+      <button class="icon" id="btnBack" title="Back (Alt+←)">←</button>
+      <button class="icon" id="btnFwd" title="Forward (Alt+→)">→</button>
+      <button class="icon" id="btnUp" title="Parent folder (Backspace)">↑</button>
+      <button class="icon" id="btnHome" title="Home (~)">⌂</button>
+      <button class="icon" id="btnRefresh" title="Refresh (R)">⟳</button>
+    </div>
+    <div class="pathbox" id="pathBox" title="Click to edit path (Ctrl/⌘+L)">
+      <div class="crumbs" id="crumbs"></div>
+      <input id="pathInput" spellcheck="false" autocomplete="off" />
+    </div>
+    <form class="search" id="searchForm">
+      <select id="searchMode" title="Search mode">
+        <option value="name">Name</option>
+        <option value="content">Content</option>
+      </select>
+      <input id="searchInput" placeholder="Search in this folder (recursive)…" spellcheck="false" />
+      <label class="chk" title="Regular expression"><input type="checkbox" id="searchRegex" />.*</label>
+      <label class="chk" title="Case sensitive"><input type="checkbox" id="searchCase" />Aa</label>
+      <button type="submit">Search</button>
+    </form>
+  </header>
+
+  <div class="main">
+    <aside class="sidebar">
+      <div class="side-title">Places <button class="mini" id="btnAddBookmark" title="Bookmark current folder">＋</button></div>
+      <ul id="bookmarks"></ul>
+      <div class="side-title">Local downloads</div>
+      <div class="dl-dir" id="dlDir" title="Where downloads are saved"></div>
+      <div class="side-actions">
+        <button class="mini wide" id="btnChangeDl">Change…</button>
+        <button class="mini wide" id="btnOpenDl">Open</button>
+      </div>
+      <div class="side-title">Shortcuts</div>
+      <div class="help">
+        <div><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Enter</kbd> open</div>
+        <div><kbd>⌫</kbd> parent · <kbd>Space</kbd> preview</div>
+        <div><kbd>/</kbd> filter · <kbd>⌘L</kbd> path</div>
+        <div><kbd>D</kbd> download · <kbd>Del</kbd> delete</div>
+        <div><kbd>F2</kbd> rename · <kbd>`</kbd> console</div>
+        <div><kbd>T</kbd> terminal · <kbd>V</kbd> VS Code</div>
+      </div>
+    </aside>
+
+    <section class="files">
+      <div class="toolbar">
+        <button id="btnUploadFiles" title="Upload files from your Mac (scp)">⬆ Upload files</button>
+        <button id="btnUploadDir" title="Upload folders from your Mac (scp -r)">⬆ Upload folder</button>
+        <button id="btnDownload" title="Download selection to your Mac (scp)">⬇ Download</button>
+        <span class="sep"></span>
+        <button id="btnNewFolder">＋ Folder</button>
+        <button id="btnNewFile">＋ File</button>
+        <button id="btnRename">Rename</button>
+        <button id="btnDelete" class="danger">Delete</button>
+        <span class="sep"></span>
+        <button id="btnOpenTerm" title="Open current folder in local Terminal over SSH (T)">&gt;_ Terminal</button>
+        <button id="btnOpenCode" title="Open current folder in VS Code Remote-SSH (V)">VS Code</button>
+        <span class="grow"></span>
+        <input id="filterInput" placeholder="Filter…  (/)" spellcheck="false" />
+        <label class="chk"><input type="checkbox" id="showHidden" /> hidden</label>
+      </div>
+      <div class="search-banner hidden" id="searchBanner">
+        <span id="searchSummary"></span>
+        <button class="mini" id="btnCloseSearch">✕ close results</button>
+      </div>
+      <div class="table-wrap" id="tableWrap" tabindex="0">
+        <table id="fileTable">
+          <thead>
+            <tr>
+              <th data-sort="n" class="col-name">Name</th>
+              <th data-sort="s" class="col-size">Size</th>
+              <th data-sort="m" class="col-date">Modified</th>
+              <th data-sort="p" class="col-perm">Perms</th>
+              <th data-sort="o" class="col-owner">Owner</th>
+            </tr>
+          </thead>
+          <tbody id="fileBody"></tbody>
+        </table>
+        <div class="empty hidden" id="emptyMsg"></div>
+        <div class="loading hidden" id="loading"><div class="spinner"></div></div>
+      </div>
+      <div class="statusbar" id="statusbar"></div>
+    </section>
+
+    <div class="resizer" id="resizer"></div>
+    <section class="preview" id="preview">
+      <div class="preview-head">
+        <div class="preview-title" id="previewTitle">Preview</div>
+        <div class="preview-actions" id="previewActions"></div>
+      </div>
+      <div class="preview-meta" id="previewMeta"></div>
+      <div class="preview-body" id="previewBody">
+        <div class="placeholder">Select a file to preview it.</div>
+      </div>
+    </section>
+  </div>
+
+  <footer class="bottom" id="bottom">
+    <div class="tabs">
+      <button class="tab active" data-tab="transfers">Transfers <span class="badge hidden" id="jobBadge"></span></button>
+      <button class="tab" data-tab="console">Console</button>
+      <span class="grow"></span>
+      <button class="mini" id="btnClearJobs">Clear finished</button>
+      <button class="mini" id="btnToggleBottom">▾</button>
+    </div>
+    <div class="tab-body" id="tab-transfers"><div id="jobs"></div></div>
+    <div class="tab-body hidden" id="tab-console">
+      <pre id="consoleOut"></pre>
+      <form id="consoleForm">
+        <span class="prompt" id="consolePrompt">$</span>
+        <input id="consoleInput" spellcheck="false" autocomplete="off" placeholder="run a command in the current folder (cd works too)" />
+      </form>
+    </div>
+  </footer>
+
+  <div class="drop-overlay hidden" id="dropOverlay">
+    <div>Drop files to upload to<br /><b id="dropTarget"></b></div>
+  </div>
+  <div class="ctx hidden" id="ctxMenu"></div>
+  <div class="toasts" id="toasts"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
