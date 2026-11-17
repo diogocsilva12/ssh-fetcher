@@ -39,6 +39,12 @@ MEDIA_EXT = {
     ".pdf", ".mp4", ".webm", ".mov", ".m4v", ".mp3", ".wav", ".ogg", ".flac", ".m4a",
 }
 
+# Served from /api/raw as attachments only: rendered inline they could run script.
+SCRIPTABLE_TYPES = {
+    "text/html", "application/xhtml+xml", "image/svg+xml",
+    "text/xml", "application/xml", "application/javascript", "text/javascript",
+}
+
 # --------------------------------------------------------------------------- #
 # Config / state
 # --------------------------------------------------------------------------- #
@@ -478,6 +484,13 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def send_raw_security_headers(self, ctype):
+        """Remote file content is untrusted: stop it from running script in this origin."""
+        self.send_header("X-Content-Type-Options", "nosniff")
+        # Browsers refuse to show PDFs in a sandboxed document; their viewers isolate PDF JS.
+        if ctype != "application/pdf":
+            self.send_header("Content-Security-Policy", "sandbox")
+
     def err(self, msg, status=400):
         self.send_json({"error": msg}, status)
 
@@ -648,7 +661,8 @@ class Handler(BaseHTTPRequestHandler):
         size = int(out.strip())
         ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
         name = os.path.basename(path)
-        disp = "attachment" if as_download else "inline"
+        # Types that can run scripts in our origin are never rendered inline.
+        disp = "attachment" if as_download or ctype in SCRIPTABLE_TYPES else "inline"
         if size <= 48 * 1024 * 1024:  # small enough: fetch through the fast agent
             code, data, err = run_remote(f"cat -- {q(path)}", timeout=300, binary=True)
             if code != 0:
@@ -657,6 +671,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Content-Disposition", f"{disp}; filename*=UTF-8''{quote(name)}")
+            self.send_raw_security_headers(ctype)
             self.end_headers()
             self.wfile.write(data)
             return
@@ -667,6 +682,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(size))
             self.send_header("Content-Disposition", f"{disp}; filename*=UTF-8''{quote(name)}")
+            self.send_raw_security_headers(ctype)
             self.end_headers()
             while True:
                 chunk = proc.stdout.read(256 * 1024)
