@@ -299,12 +299,15 @@
     }
   }
 
+  const canRenderMd = () => !!(window.marked && window.DOMPurify);
+
   function renderText(d, ext, line, mode) {
     const body = $("previewBody");
     const note = d.truncated ? `<div class="trunc-note">Large file — showing the first ${fmtSize(d.content.length)} of ${fmtSize(d.size)}. Download to see everything.</div>` : "";
-    mode = mode || (ext === "md" && window.marked ? "md" : (["csv", "tsv"].includes(ext) ? "table" : "code"));
+    mode = mode || (ext === "md" && canRenderMd() ? "md" : (["csv", "tsv"].includes(ext) ? "table" : "code"));
     if (mode === "md") {
-      body.innerHTML = note + `<div class="markdown">${window.marked.parse(d.content)}</div>`;
+      // Remote files are untrusted (shared filesystem): never render Markdown HTML unsanitised.
+      body.innerHTML = note + `<div class="markdown">${window.DOMPurify.sanitize(window.marked.parse(d.content))}</div>`;
       return;
     }
     if (mode === "table") {
@@ -345,7 +348,7 @@
     if (d && (d.kind === "media")) btn("↗", "Open in new tab", () => window.open(rawUrl(r.path), "_blank"));
     if (d && d.kind === "text") {
       const ext = (r.path.split(".").pop() || "").toLowerCase();
-      if (ext === "md" && window.marked) {
+      if (ext === "md" && canRenderMd()) {
         let raw = false;
         btn("Raw/MD", "Toggle markdown rendering", () => { raw = !raw; renderText(d, ext, null, raw ? "code" : "md"); });
       }
