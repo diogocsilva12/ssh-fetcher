@@ -5,12 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ssh-fetcher</title>
   <link rel="stylesheet" href="/style.css" />
-  <!-- Optional enhancements (app works without them if offline) -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css" />
-  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/highlight.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
-  <!-- Required for Markdown rendering: without it, .md files are shown as plain text -->
-  <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+  <!-- Bundled in static/vendor (no CDN): highlight.js 11.9.0, marked 12.0.2, DOMPurify 3.1.6 -->
+  <link rel="stylesheet" href="/vendor/github-dark.min.css" />
+  <script defer src="/vendor/highlight.min.js"></script>
+  <script defer src="/vendor/marked.min.js"></script>
+  <script defer src="/vendor/purify.min.js"></script>
 </head>
 <body>
   <header class="topbar">
@@ -51,6 +50,9 @@
         <button class="mini wide" id="btnChangeDl">Change…</button>
         <button class="mini wide" id="btnOpenDl">Open</button>
       </div>
+      <div class="xfer-mode" id="xferMode"></div>
+      <div class="side-title">Quota <span><button class="mini" id="btnQuotaRefresh" title="Refresh quota">⟳</button> <button class="mini" id="btnUsage" title="Quota and billing details">Details</button></span></div>
+      <div id="quota" class="quota"><div class="muted">…</div></div>
       <div class="side-title">Shortcuts</div>
       <div class="help">
         <div><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Enter</kbd> open</div>
@@ -59,6 +61,8 @@
         <div><kbd>D</kbd> download · <kbd>Del</kbd> delete</div>
         <div><kbd>F2</kbd> rename · <kbd>`</kbd> console</div>
         <div><kbd>T</kbd> terminal · <kbd>V</kbd> VS Code</div>
+        <div><kbd>⌘C</kbd><kbd>⌘X</kbd><kbd>⌘V</kbd> copy/cut/paste</div>
+        <div><kbd>⇧Del</kbd> delete permanently</div>
       </div>
     </aside>
 
@@ -66,12 +70,15 @@
       <div class="toolbar">
         <button id="btnUploadFiles" title="Upload files from your Mac (scp)">⬆ Upload files</button>
         <button id="btnUploadDir" title="Upload folders from your Mac (scp -r)">⬆ Upload folder</button>
-        <button id="btnDownload" title="Download selection to your Mac (scp)">⬇ Download</button>
+        <button id="btnDownload" title="Download selection to your Mac (D)">⬇ Download</button>
+        <button id="btnArchive" title="Download the selection as one .tar.gz">⬇ .tar.gz</button>
         <span class="sep"></span>
         <button id="btnNewFolder">＋ Folder</button>
         <button id="btnNewFile">＋ File</button>
         <button id="btnRename">Rename</button>
-        <button id="btnDelete" class="danger">Delete</button>
+        <button id="btnDelete" class="danger" title="Move to trash (Del). Shift+Del deletes permanently">Delete</button>
+        <button id="btnPaste" class="hidden" title="Paste here (⌘V)">Paste</button>
+        <button id="btnSizes" title="Measure folder sizes here (du) and sort by size">Sizes</button>
         <span class="sep"></span>
         <button id="btnOpenTerm" title="Open current folder in local Terminal over SSH (T)">&gt;_ Terminal</button>
         <button id="btnOpenCode" title="Open current folder in VS Code Remote-SSH (V)">VS Code</button>
@@ -119,8 +126,13 @@
     <div class="tabs">
       <button class="tab active" data-tab="transfers">Transfers <span class="badge hidden" id="jobBadge"></span></button>
       <button class="tab" data-tab="console">Console</button>
+      <button class="tab" data-tab="slurm">Slurm <span class="badge hidden" id="slurmBadge"></span></button>
+      <button class="tab" data-tab="usage">Usage</button>
+      <button class="tab" data-tab="trash">Trash</button>
       <span class="grow"></span>
       <button class="mini" id="btnClearJobs">Clear finished</button>
+      <button class="mini hidden" id="btnSlurmRefresh">⟳ Refresh</button>
+      <button class="mini hidden danger" id="btnEmptyTrash">Empty trash</button>
       <button class="mini" id="btnToggleBottom">▾</button>
     </div>
     <div class="tab-body" id="tab-transfers"><div id="jobs"></div></div>
@@ -128,9 +140,13 @@
       <pre id="consoleOut"></pre>
       <form id="consoleForm">
         <span class="prompt" id="consolePrompt">$</span>
-        <input id="consoleInput" spellcheck="false" autocomplete="off" placeholder="run a command in the current folder (cd works too)" />
+        <input id="consoleInput" spellcheck="false" autocomplete="off" placeholder="run a command in the current folder (cd works too, Ctrl+C stops)" />
+        <button type="button" class="mini hidden" id="btnConsoleStop">⏹ Stop</button>
       </form>
     </div>
+    <div class="tab-body hidden" id="tab-slurm"><div id="slurmJobs"></div></div>
+    <div class="tab-body hidden" id="tab-usage"><div id="usage" class="usage"></div></div>
+    <div class="tab-body hidden" id="tab-trash"><div id="trashList"></div></div>
   </footer>
 
   <div class="drop-overlay hidden" id="dropOverlay">
