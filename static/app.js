@@ -23,6 +23,10 @@
     previewPath: null,
     previewData: null,
     consoleHist: [], consoleIdx: -1,
+    consoleRun: null,     // AbortController of the running console command
+    follow: null,         // {ac, path} while tailing a file in the preview
+    clip: null,           // {mode: "copy"|"cut", paths, host}
+    sizesFor: null,       // folder whose subfolder sizes (du) are loaded
     jobs: [],
   };
 
@@ -54,16 +58,48 @@
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     let data; try { data = await r.json(); } catch { data = {}; }
-    if (!r.ok || (data && data.error && !data.entries)) throw new Error((data && data.error) || `HTTP ${r.status}`);
+    if (!r.ok || (data && data.error && !data.entries)) {
+      const e = new Error((data && data.error) || `HTTP ${r.status}`);
+      e.status = r.status; e.data = data;
+      throw e;
+    }
     return data;
   }
-  const rawUrl = (p, dl) => `/api/raw?token=${encodeURIComponent(TOKEN)}&path=${encodeURIComponent(p)}${dl ? "&dl=1" : ""}`;
+  // The token travels in an HttpOnly cookie for these URLs (set by /api/session), never in the URL.
+  const rawUrl = (p, dl) => `/api/raw?path=${encodeURIComponent(p)}${dl ? "&dl=1" : ""}`;
 
-  function toast(msg, kind = "") {
+  // NDJSON stream: calls onMsg for each {"o"|"e": text} / {"end": code} line until the server closes.
+  async function streamApi(body, onMsg, signal) {
+    const r = await fetch("/api/stream", {
+      method: "POST", signal, body: JSON.stringify(body),
+      headers: { "X-Token": TOKEN, "Content-Type": "application/json" },
+    });
+    if (!r.ok) { let m; try { m = (await r.json()).error; } catch { } throw new Error(m || `HTTP ${r.status}`); }
+    const reader = r.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 1);
+        if (line) onMsg(JSON.parse(line));
+      }
+    }
+  }
+
+  function toast(msg, kind = "", action) {
     const el = document.createElement("div");
     el.className = "toast " + kind; el.textContent = msg;
+    if (action) {
+      const b = document.createElement("button");
+      b.className = "mini"; b.textContent = action.label;
+      b.onclick = () => { el.remove(); action.fn(); };
+      el.appendChild(b);
+    }
     $("toasts").appendChild(el);
-    setTimeout(() => el.remove(), kind === "bad" ? 7000 : 3500);
+    setTimeout(() => el.remove(), action ? 10000 : kind === "bad" ? 7000 : 3500);
   }
   const busy = (on) => $("loading").classList.toggle("hidden", !on);
 
@@ -95,6 +131,7 @@
       S.cwd = data.path;
       S.entries = data.entries.map((e) => ({ name: e.n, path: join(data.path, e.n), d: e.d, s: e.s, m: e.m, p: e.p, o: e.o, l: e.l, t: e.t, b: e.b }));
       S.search = null; S.sel.clear(); S.cursor = -1;
+      S.sizesFor = null; S.sizesTotal = null;
       $("searchBanner").classList.add("hidden");
       if (prev !== S.cwd) { $("filterInput").value = ""; S.filter = ""; }
       render();
@@ -158,8 +195,9 @@
     }
     const { desc } = S.sort;
     const key = S.sort.key === "n" ? "name" : S.sort.key;
+    const bySize = S.sizesFor === S.cwd && S.sort.key === "s";
     rows.sort((a, b) => {
-      if (a.d !== b.d) return a.d ? -1 : 1;
+      if (a.d !== b.d && !bySize) return a.d ? -1 : 1;
       let x = a[key], y = b[key];
       let c = typeof x === "number" ? x - y : String(x ?? "").localeCompare(String(y ?? ""), undefined, { numeric: true, sensitivity: "base" });
       return desc ? -c : c;
@@ -188,7 +226,7 @@
       if (r.hit) name += `<span class="sub">:${r.line}</span><span class="hit-text">${highlightQuery(r.text.trim(), S.search.query)}</span>`;
       tr.innerHTML =
         `<td class="name" title="${esc(r.path)}">${name}</td>` +
-        `<td class="size">${r.d || r.hit ? "" : fmtSize(r.s)}</td>` +
+        `<td class="size">${(r.d && !r.du) || r.hit ? "" : fmtSize(r.s)}</td>` +
         `<td class="date">${fmtDate(r.m)}</td>` +
         `<td class="perm">${esc(r.p || "")}</td>` +
         `<td class="owner">${esc(r.o || "")}</td>`;
@@ -213,7 +251,9 @@
     let txt = S.search
       ? `${real.length} result${real.length === 1 ? "" : "s"}`
       : `${real.filter((r) => r.d).length} folders, ${real.filter((r) => !r.d).length} files`;
+    if (S.sizesFor === S.cwd && S.sizesTotal != null && !S.search) txt += `  ·  ${fmtSize(S.sizesTotal)} on disk`;
     if (sel.length) txt += `  ·  ${sel.length} selected${selSize ? ` (${fmtSize(selSize)})` : ""}`;
+    if (S.clip && S.clip.host === S.info?.host) txt += `  ·  ${S.clip.paths.length} item(s) ${S.clip.mode === "cut" ? "cut" : "copied"}`;
     $("statusbar").textContent = txt;
   }
 
@@ -263,6 +303,7 @@
   const TEXT_EXT_LANG = { py: "python", sh: "bash", bash: "bash", slurm: "bash", sbatch: "bash", c: "c", h: "c", cpp: "cpp", hpp: "cpp", cc: "cpp", cu: "cpp", js: "javascript", ts: "typescript", json: "json", yml: "yaml", yaml: "yaml", toml: "ini", ini: "ini", cfg: "ini", md: "markdown", f90: "fortran", f: "fortran", rs: "rust", go: "go", java: "java", jl: "julia", r: "r", xml: "xml", html: "xml", css: "css", mk: "makefile", cmake: "cmake", tex: "latex", sql: "sql", dockerfile: "dockerfile" };
 
   async function showPreview(r, { line } = {}) {
+    stopFollow();
     S.previewPath = r.path;
     S.previewData = null;
     $("previewTitle").textContent = base(r.path);
@@ -357,6 +398,7 @@
         btn("Raw/Table", "Toggle table view", () => { raw = !raw; renderText(d, ext, null, raw ? "code" : "table"); });
       }
       btn("Wrap", "Toggle line wrap", () => $("previewBody").classList.toggle("wrap"));
+      btn("▶ Follow", "Show new lines as the file grows (tail -F)", () => startFollow(r));
       if (!d.truncated) btn("✎ Edit", "Edit and save back to the remote", () => editFile(r, d));
     }
     btn("VS Code", "Open file in VS Code Remote-SSH", () => openInVSCode(r.path, false));
@@ -370,16 +412,22 @@
     ta.value = d.content;
     ta.focus();
     const a = $("previewActions"); a.innerHTML = "";
-    const save = async () => {
+    const save = async (force = false) => {
       try {
-        await api("/api/save", { method: "POST", body: { path: r.path, content: ta.value } });
+        await api("/api/save", { method: "POST", body: { path: r.path, content: ta.value, expect: { mtime: d.mtime, size: d.size }, force } });
         toast("Saved " + base(r.path), "ok");
         showPreview(r);
         if (!S.search) refresh();
-      } catch (e) { toast(e.message, "bad"); }
+      } catch (e) {
+        if (e.status === 409) {
+          if (confirm(`${base(r.path)} changed on ${S.info.host} since you opened it (now ${fmtSize(e.data.size)}, modified ${fmtDate(e.data.mtime)}).\n\nOverwrite it with your version?`)) save(true);
+          return;
+        }
+        toast(e.message, "bad");
+      }
     };
     const mk = (label, fn) => { const b = document.createElement("button"); b.className = "mini"; b.textContent = label; b.onclick = fn; a.appendChild(b); };
-    mk("💾 Save (⌘S)", save);
+    mk("💾 Save (⌘S)", () => save());
     mk("Cancel", () => showPreview(r));
     ta.addEventListener("keydown", (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); save(); }
@@ -388,7 +436,39 @@
     });
   }
 
+  // ------------------------------------------------------------------ follow (tail -F)
+  function stopFollow() {
+    if (S.follow) { S.follow.ac.abort(); S.follow = null; }
+  }
+  function startFollow(r) {
+    stopFollow();
+    S.previewPath = r.path;
+    $("previewTitle").textContent = base(r.path); $("previewTitle").title = r.path;
+    $("previewMeta").textContent = "following · tail -F";
+    const body = $("previewBody");
+    body.classList.add("wrap");
+    body.innerHTML = `<div class="trunc-note">Following: new lines appear as the file grows. If it does not exist yet, it is picked up when created.</div><pre class="follow" id="followOut"></pre>`;
+    const out = $("followOut");
+    const ac = new AbortController();
+    S.follow = { ac, path: r.path };
+    const a = $("previewActions"); a.innerHTML = "";
+    const mk = (label, title, fn) => { const b = document.createElement("button"); b.className = "mini"; b.textContent = label; b.title = title; b.onclick = fn; a.appendChild(b); };
+    mk("⏹ Stop", "Stop following", () => showPreview(r));
+    mk("⧉", "Copy remote path", () => copy(r.path));
+    streamApi({ kind: "tail", path: r.path, lines: 500 }, (m) => {
+      const t = m.o || m.e;
+      if (!t) return;
+      const stick = body.scrollTop + body.clientHeight >= body.scrollHeight - 40;
+      out.appendChild(document.createTextNode(t));
+      if (out.textContent.length > 2000000) out.textContent = out.textContent.slice(-1000000);
+      if (stick) body.scrollTop = body.scrollHeight;
+    }, ac.signal).catch((e) => {
+      if (e.name !== "AbortError" && S.follow?.ac === ac) out.appendChild(document.createTextNode(`\n[${e.message}]\n`));
+    });
+  }
+
   function clearPreview() {
+    stopFollow();
     S.previewPath = null;
     $("previewTitle").textContent = "Preview";
     $("previewMeta").textContent = "";
@@ -426,12 +506,14 @@
   }
 
   // ------------------------------------------------------------------ file ops
-  async function download(rows) {
+  async function download(rows, mode = "default") {
     rows = rows.filter((r) => !r.up);
     if (!rows.length) return toast("Nothing selected");
     try {
-      const d = await api("/api/download", { method: "POST", body: { items: rows.map((r) => ({ path: r.path, isDir: r.d, size: r.s })) } });
-      toast(`Downloading ${rows.length} item(s) via scp → ${tilde2(S.info.download_dir)}`);
+      const d = await api("/api/download", { method: "POST", body: { mode, items: rows.map((r) => ({ path: r.path, isDir: r.d, size: r.d ? null : r.s })) } });
+      trackJobs(d.jobs);
+      const how = mode === "archive" ? "as one .tar.gz" : mode === "sync" ? "with rsync (sync)" : "";
+      toast(`Downloading ${rows.length} item(s) ${how} → ${tilde2(S.info.download_dir)}`);
       showTab("transfers"); pollJobs(true);
       return d;
     } catch (e) { toast(e.message, "bad"); }
@@ -451,7 +533,7 @@
       if (!paths.length) return;
       if (!confirmOverwrite(paths.map((p) => base(p)))) return;
       const dir = S.cwd;
-      await api("/api/upload_paths", { method: "POST", body: { paths, dir } });
+      trackJobs((await api("/api/upload_paths", { method: "POST", body: { paths, dir } })).jobs);
       toast(`Uploading ${paths.length} item(s) → ${tilde(dir)}`);
       showTab("transfers"); pollJobs(true);
     } catch (e) { toast(e.message, "bad"); }
@@ -475,6 +557,7 @@
       xhr.upload.onprogress = (e) => { const j = staging.get(id); if (j) { j.done = e.loaded; renderJobs(); } };
       xhr.onload = () => {
         staging.delete(id);
+        try { trackJobs(JSON.parse(xhr.responseText).jobs); } catch { }
         if (xhr.status >= 300) toast(`Upload of ${f.name} failed`, "bad");
         pollJobs(true);
       };
@@ -509,17 +592,197 @@
     try { await api("/api/rename", { method: "POST", body: { src: r.path, dst } }); refresh(); }
     catch (e) { toast(e.message, "bad"); }
   }
-  async function deleteSel() {
+  const pathList = (paths) => paths.slice(0, 15).join("\n") + (paths.length > 15 ? `\n…and ${paths.length - 15} more` : "");
+  async function deletePermanently(paths) {
+    const r = await api("/api/delete", { method: "POST", body: { paths, permanent: true } });
+    r.errors.forEach((m) => toast(m, "bad"));
+    if (r.deleted.length) toast(`Permanently deleted ${r.deleted.length} item(s)`, "ok");
+  }
+  async function deleteSel(permanent = false) {
     const rows = targetRows();
     if (!rows.length) return;
-    const list = rows.slice(0, 15).map((r) => (r.d ? "📁 " : "") + r.path).join("\n") + (rows.length > 15 ? `\n…and ${rows.length - 15} more` : "");
-    if (!confirm(`Permanently delete ${rows.length} item(s) on ${S.info.host}?\n\n${list}\n\nThis cannot be undone.`)) return;
+    const paths = rows.map((r) => r.path);
     try {
-      await api("/api/delete", { method: "POST", body: { paths: rows.map((r) => r.path) } });
-      toast(`Deleted ${rows.length} item(s)`, "ok");
-      if (rows.some((r) => r.path === S.previewPath)) clearPreview();
+      if (permanent) {
+        if (!confirm(`Permanently delete ${rows.length} item(s) on ${S.info.host}?\n\n${pathList(paths)}\n\nThis skips the trash and cannot be undone.`)) return;
+        await deletePermanently(paths);
+      } else {
+        const r = await api("/api/delete", { method: "POST", body: { paths } });
+        r.errors.forEach((m) => toast(m, "bad"));
+        if (r.trashed.length) toast(`Moved ${r.trashed.length} item(s) to the trash`, "ok", { label: "Undo", fn: () => restoreTrash(r.trashed.map((t) => t.id)) });
+        if (r.cross.length && confirm(`${r.cross.length} item(s) are on a different filesystem from your home folder:\n\n${pathList(r.cross)}\n\nMoving them to the trash would copy them into your home quota, so they can only be deleted permanently.\n\nDelete them permanently? This cannot be undone.`)) await deletePermanently(r.cross);
+      }
+      if (paths.includes(S.previewPath)) clearPreview();
       refresh();
     } catch (e) { toast(e.message, "bad"); }
+  }
+
+  // ------------------------------------------------------------------ trash
+  async function restoreTrash(ids) {
+    try {
+      const r = await api("/api/trash/restore", { method: "POST", body: { ids } });
+      r.errors.forEach((m) => toast(m, "bad"));
+      if (r.restored.length) toast(`Restored ${r.restored.length} item(s)`, "ok");
+      refresh(); if (!$("tab-trash").classList.contains("hidden")) loadTrash();
+    } catch (e) { toast(e.message, "bad"); }
+  }
+  async function loadTrash() {
+    const el = $("trashList");
+    try {
+      const { items, root } = await api("/api/trash");
+      if (!items.length) { el.innerHTML = `<div class="jobs-empty">The trash is empty. Deleted items go to <code>${esc(tilde(root))}</code> on ${esc(S.info.host)}.</div>`; return; }
+      el.innerHTML = `<table class="grid"><thead><tr><th>Original location</th><th>Deleted</th><th></th></tr></thead><tbody>` +
+        items.map((it) => `<tr><td class="mono">${it.d ? "📁 " : ""}${esc(tilde(it.path))}</td><td class="mono">${fmtDate(it.ts)}</td>
+          <td class="acts"><button class="mini" data-restore="${esc(it.id)}">Restore</button> <button class="mini danger" data-purge="${esc(it.id)}">Delete</button></td></tr>`).join("") +
+        `</tbody></table>`;
+    } catch (e) { el.innerHTML = `<div class="jobs-empty">⚠ ${esc(e.message)}</div>`; }
+  }
+  $("trashList").addEventListener("click", async (e) => {
+    const t = e.target;
+    if (t.dataset.restore) restoreTrash([t.dataset.restore]);
+    if (t.dataset.purge && confirm("Delete this item permanently? This cannot be undone.")) {
+      try { await api("/api/trash/purge", { method: "POST", body: { ids: [t.dataset.purge] } }); loadTrash(); } catch (er) { toast(er.message, "bad"); }
+    }
+  });
+  $("btnEmptyTrash").onclick = async () => {
+    if (!confirm(`Permanently delete everything in the trash on ${S.info.host}? This cannot be undone.`)) return;
+    try { await api("/api/trash/purge", { method: "POST", body: {} }); loadTrash(); toast("Trash emptied", "ok"); } catch (e) { toast(e.message, "bad"); }
+  };
+
+  // ------------------------------------------------------------------ clipboard (remote copy / move)
+  function clipSel(mode) {
+    const rows = targetRows();
+    if (!rows.length) return;
+    S.clip = { mode, paths: rows.map((r) => r.path), host: S.info.host };
+    toast(`${rows.length} item(s) ${mode === "cut" ? "cut" : "copied"}: paste with ⌘V`);
+    updatePasteBtn(); renderStatus();
+  }
+  function updatePasteBtn() {
+    const on = S.clip && S.clip.host === S.info?.host;
+    $("btnPaste").classList.toggle("hidden", !on);
+    if (on) $("btnPaste").textContent = `Paste ${S.clip.paths.length} (${S.clip.mode === "cut" ? "move" : "copy"})`;
+  }
+  async function paste(dest = S.cwd) {
+    if (!S.clip || S.clip.host !== S.info.host) return toast("Nothing to paste: copy (⌘C) or cut (⌘X) first");
+    try {
+      const r = await api("/api/paste", { method: "POST", body: { mode: S.clip.mode === "cut" ? "move" : "copy", paths: S.clip.paths, dest } });
+      r.errors.forEach((m) => toast(m, "bad"));
+      if (!r.jobs.length) return;
+      trackJobs(r.jobs);
+      if (S.clip.mode === "cut") { S.clip = null; updatePasteBtn(); }
+      showTab("transfers"); pollJobs(true);
+    } catch (e) { toast(e.message, "bad"); }
+  }
+
+  // ------------------------------------------------------------------ folder sizes (du)
+  async function measureSizes() {
+    const dir = S.cwd;
+    busy(true);
+    toast("Measuring folder sizes (du can take a while on large trees)…");
+    try {
+      const d = await api("/api/du", { params: { path: dir } });
+      if (S.cwd !== dir) return;
+      S.entries.forEach((e) => { if (e.d && d.sizes[e.path] != null) { e.s = d.sizes[e.path]; e.du = true; } });
+      S.sizesFor = dir; S.sizesTotal = d.total;
+      S.sort = { key: "s", desc: true };
+      render(); setCursor(0, { select: false, preview: false });
+      if (d.timedOut) toast("du timed out: sizes are partial", "bad");
+    } catch (e) { toast(e.message, "bad"); }
+    finally { busy(false); }
+  }
+
+  // ------------------------------------------------------------------ slurm
+  const SCRIPT_EXT = ["sh", "slurm", "sbatch", "job", "batch", "bash"];
+  async function submitJob(r) {
+    if (!confirm(`Submit ${base(r.path)} with sbatch on ${S.info.host}?\n\nIt runs from ${tilde(parent(r.path))} and uses your allocation.`)) return;
+    try {
+      const d = await api("/api/slurm/submit", { method: "POST", body: { path: r.path } });
+      toast(d.out || "Submitted", "ok");
+      showTab("slurm");
+    } catch (e) { toast(e.message, "bad"); }
+  }
+  let slurmTimer = null;
+  async function loadSlurm() {
+    clearTimeout(slurmTimer);
+    const el = $("slurmJobs");
+    try {
+      const d = await api("/api/slurm/jobs");
+      if (!d.available) { el.innerHTML = `<div class="jobs-empty">Slurm (squeue) is not available on ${esc(S.info.host)}.</div>`; return; }
+      const jobs = d.jobs || [];
+      $("slurmBadge").textContent = jobs.length; $("slurmBadge").classList.toggle("hidden", !jobs.length);
+      if (d.error) el.innerHTML = `<div class="jobs-empty">⚠ ${esc(d.error)}</div>`;
+      else if (!jobs.length) el.innerHTML = `<div class="jobs-empty">No jobs in the queue (squeue --me). Right-click a job script and choose “Submit with sbatch”.</div>`;
+      else el.innerHTML = `<table class="grid"><thead><tr><th>Job ID</th><th>Name</th><th>Partition</th><th>State</th><th>Time</th><th>Limit</th><th>Nodes</th><th>Reason / nodes</th><th>Account</th><th></th></tr></thead><tbody>` +
+        jobs.map((j) => `<tr><td class="mono">${esc(j.id)}</td><td>${esc(j.name)}</td><td class="mono">${esc(j.partition)}</td>
+          <td><span class="state st-${esc(j.state.toLowerCase())}">${esc(j.state)}</span></td><td class="mono">${esc(j.time)}</td><td class="mono">${esc(j.limit)}</td>
+          <td class="mono">${esc(j.nodes)}</td><td class="mono">${esc(j.reason)}</td><td class="mono">${esc(j.account)}</td>
+          <td class="acts"><button class="mini" data-log="${esc(j.id)}" title="Follow the job's output file">Log</button> <button class="mini" data-dir="${esc(j.workdir)}" title="Open the job's working folder">Folder</button> <button class="mini danger" data-scancel="${esc(j.id)}" data-name="${esc(j.name)}">Cancel</button></td></tr>`).join("") +
+        `</tbody></table>`;
+    } catch (e) { el.innerHTML = `<div class="jobs-empty">⚠ ${esc(e.message)}</div>`; }
+    if (!$("tab-slurm").classList.contains("hidden") && !$("bottom").classList.contains("collapsed")) slurmTimer = setTimeout(loadSlurm, 15000);
+  }
+  $("slurmJobs").addEventListener("click", async (e) => {
+    const t = e.target;
+    try {
+      if (t.dataset.scancel) {
+        if (!confirm(`Cancel job ${t.dataset.scancel} (${t.dataset.name})?`)) return;
+        await api("/api/slurm/cancel", { method: "POST", body: { id: t.dataset.scancel } });
+        toast(`Cancelled job ${t.dataset.scancel}`, "ok"); setTimeout(loadSlurm, 800);
+      }
+      if (t.dataset.log) {
+        const d = await api("/api/slurm/log", { params: { id: t.dataset.log } });
+        if (!d.stdout) return toast("No output file recorded for this job", "bad");
+        startFollow({ path: d.stdout });
+      }
+      if (t.dataset.dir) go(t.dataset.dir);
+    } catch (er) { toast(er.message, "bad"); }
+  });
+  $("btnSlurmRefresh").onclick = loadSlurm;
+
+  // ------------------------------------------------------------------ quota / billing
+  function quotaBar(q) {
+    const pct = q.limit ? Math.min(100, (q.used / q.limit) * 100) : 0;
+    const cls = pct >= 95 ? "bad" : pct >= 80 ? "warn" : "";
+    return `<div class="q" title="${esc(q.fs)}"><div class="q-top"><span>${esc(tilde(q.fs))}</span><span>${fmtSize(q.used)}${q.limit ? " / " + fmtSize(q.limit) : ""}</span></div>` +
+      (q.limit ? `<div class="qbar ${cls}"><div style="width:${pct}%"></div></div>` : "") +
+      (q.files_limit ? `<div class="q-files">${q.files.toLocaleString()} / ${q.files_limit.toLocaleString()} files</div>` : "") + `</div>`;
+  }
+  let lastQuota = null;
+  async function loadQuota() {
+    try {
+      lastQuota = await api("/api/quota");
+      $("quota").innerHTML = lastQuota.items.length ? lastQuota.items.map(quotaBar).join("") : `<div class="muted">No quota information.</div>`;
+    } catch (e) { $("quota").innerHTML = `<div class="muted">⚠ ${esc(e.message)}</div>`; }
+  }
+  async function loadUsage() {
+    const el = $("usage");
+    el.innerHTML = `<div class="jobs-empty">Loading…</div>`;
+    await loadQuota();
+    let bill;
+    try { bill = await api("/api/billing"); } catch (e) { bill = { error: e.message, accounts: [] }; }
+    const accts = (bill.accounts || []).map((a) => `<button class="mini" data-acct="${esc(a.name)}" title="billing -a ${esc(a.name)}">${esc(a.name)}${a.arch ? ` · ${a.arch}` : ""}</button>`).join(" ");
+    el.innerHTML = `<div class="usage-col"><h4>Storage quota</h4>${lastQuota && lastQuota.items.length ? lastQuota.items.map(quotaBar).join("") : ""}
+        <pre class="raw">${esc(lastQuota?.raw || "")}</pre></div>
+      <div class="usage-col"><h4>Compute billing</h4>
+        ${bill.error ? `<div class="muted">⚠ ${esc(bill.error)}</div>` : bill.available ? `<pre class="raw">${esc(bill.output || "(no output)")}</pre>` : `<div class="muted">The <code>billing</code> command is not available on ${esc(S.info.host)}.</div>`}
+        ${accts ? `<div class="acct-row"><span class="muted">Usage per user (account suffix: a = ARM, x = x86, g = GPU):</span> ${accts}</div>` : ""}
+        <pre class="raw" id="acctOut"></pre></div>`;
+  }
+  $("usage").addEventListener("click", async (e) => {
+    const a = e.target.dataset.acct;
+    if (!a) return;
+    $("acctOut").textContent = `billing -a ${a} …`;
+    try { const d = await api("/api/billing", { params: { account: a } }); $("acctOut").textContent = d.output || "(no output)"; }
+    catch (er) { $("acctOut").textContent = "⚠ " + er.message; }
+  });
+  $("btnQuotaRefresh").onclick = loadQuota;
+  $("btnUsage").onclick = () => showTab("usage");
+
+  function renderXferMode() {
+    const r = S.info?.rsync || {};
+    $("xferMode").innerHTML = r.enabled
+      ? `Transfers: rsync ${esc(r.local)}, resumable`
+      : `Transfers: scp / tar. ${!r.local ? "For resume and sync install rsync 3.1+ (brew install rsync)." : "rsync is missing on the remote."}`;
   }
   async function openInTerminal(path = S.cwd) {
     try {
@@ -535,7 +798,12 @@
   }
 
   // ------------------------------------------------------------------ jobs
+  const JOB_ICON = { upload: "⬆", download: "⬇", copy: "⧉", move: "➜" };
+  const JOB_DONE = { upload: "Uploaded", download: "Downloaded", copy: "Copied", move: "Moved" };
   let pollHandle = null;
+  // Register jobs the moment they are created, so one that finishes before the next poll
+  // still counts as a running -> done transition (toast + refresh).
+  const trackJobs = (jobs) => { if (jobs?.length) S.jobs = [...jobs, ...S.jobs.filter((j) => !jobs.some((n) => n.id === j.id))]; };
   async function pollJobs(fast) {
     clearTimeout(pollHandle);
     try {
@@ -544,8 +812,9 @@
       for (const j of S.jobs) {
         if (prev.get(j.id) === "running" && j.status !== "running") {
           if (j.status === "done") {
-            toast(`${j.kind === "upload" ? "Uploaded" : "Downloaded"} ${j.label}`, "ok");
-            if (j.kind === "upload" && parent(j.dest) === S.cwd && !S.search) refresh();
+            toast(`${JOB_DONE[j.kind] || "Finished"} ${j.label}${j.warning ? ` (${j.warning})` : ""}`, "ok");
+            const touched = j.kind === "upload" ? [parent(j.dest)] : (j.kind === "copy" || j.kind === "move") ? [parent(j.dest), j.dest, ...(j.srcDirs || [])] : [];
+            if (touched.includes(S.cwd) && !S.search) refresh();
           } else if (j.status === "error") toast(`${j.label}: ${j.error}`, "bad");
         }
       }
@@ -569,14 +838,16 @@
       const actions = j.status === "running" && !String(j.id).startsWith("stg-")
         ? `<button class="mini" data-cancel="${j.id}">Cancel</button>`
         : j.status === "done" && j.kind === "download" ? `<button class="mini" data-reveal="${esc(j.dest)}">Show</button>`
-        : j.status === "done" && j.kind === "upload" ? `<button class="mini" data-goto="${esc(j.dest)}">Go to</button>` : "";
+        : j.status === "done" ? `<button class="mini" data-goto="${esc(j.dest)}">Go to</button>`
+        : (j.status === "error" || j.status === "cancelled") && j.resumable ? `<button class="mini" data-resume="${j.id}" title="Continue with rsync, keeping what was already transferred">Resume</button>` : "";
       return `<div class="job ${j.status}">
-        <span>${j.kind === "upload" ? "⬆" : "⬇"}</span>
-        <span class="lbl">${esc(j.label)}<span class="dst">${esc(j.kind === "download" ? tilde2(j.dest) : j.dest)}</span></span>
+        <span>${JOB_ICON[j.kind] || "•"}</span>
+        <span class="lbl">${esc(j.label)}${j.method ? `<span class="tag">${esc(j.method)}</span>` : ""}<span class="dst">${esc(j.kind === "download" ? tilde2(j.dest) : j.dest)}</span></span>
         <div class="bar ${indet ? "indet" : ""}"><div style="width:${j.status === "done" ? 100 : pct}%"></div></div>
         <span class="stat">${fmtSize(j.done)}${j.total ? " / " + fmtSize(j.total) : ""}<br>${stat}</span>
         <span>${actions}</span>
         ${j.error ? `<span class="err">${esc(j.error)}</span>` : ""}
+        ${j.warning ? `<span class="warn">${esc(j.warning)}</span>` : ""}
       </div>`;
     }).join("");
   }
@@ -586,6 +857,10 @@
     if (t.dataset.cancel) { await api("/api/jobs/cancel", { method: "POST", body: { id: t.dataset.cancel } }); pollJobs(true); }
     if (t.dataset.reveal) api("/api/reveal", { method: "POST", body: { path: t.dataset.reveal } });
     if (t.dataset.goto) go(parent(t.dataset.goto), { select: t.dataset.goto });
+    if (t.dataset.resume) {
+      try { trackJobs([(await api("/api/jobs/resume", { method: "POST", body: { id: t.dataset.resume } })).job]); pollJobs(true); }
+      catch (er) { toast(er.message, "bad"); }
+    }
   });
 
   // ------------------------------------------------------------------ console
@@ -607,28 +882,53 @@
       return;
     }
     if (cmd === "clear") { $("consoleOut").innerHTML = ""; return; }
+    const ac = new AbortController();
+    S.consoleRun = ac; consoleBusy(true);
+    let code = null;
     try {
-      const r = await api("/api/exec", { method: "POST", body: { cwd: S.cwd, cmd } });
-      if (r.stdout) consolePrint(esc(r.stdout));
-      if (r.stderr) consolePrint(`<span class="err">${esc(r.stderr)}</span>`);
-      if (r.code) consolePrint(`<span class="err">[exit ${r.code}]</span>\n`);
-      if (!S.search) go(S.cwd, { push: false, select: S.rows[S.cursor]?.path });
-    } catch (e) { consolePrint(`<span class="err">${esc(e.message)}</span>\n`); }
+      await streamApi({ kind: "exec", cwd: S.cwd, cmd }, (m) => {
+        if (m.o) consolePrint(esc(m.o));
+        if (m.e) consolePrint(`<span class="err">${esc(m.e)}</span>`);
+        if ("end" in m) code = m.end;
+      }, ac.signal);
+      if (code) consolePrint(`<span class="err">[exit ${code}]</span>\n`);
+    } catch (e) {
+      consolePrint(`<span class="err">${e.name === "AbortError" ? "^C (stopped)" : esc(e.message)}</span>\n`);
+    } finally {
+      S.consoleRun = null; consoleBusy(false);
+    }
+    if (!S.search) go(S.cwd, { push: false, select: S.rows[S.cursor]?.path });
   }
-  $("consoleForm").addEventListener("submit", (e) => { e.preventDefault(); const v = $("consoleInput").value; $("consoleInput").value = ""; runConsole(v); });
+  function consoleBusy(on) {
+    $("btnConsoleStop").classList.toggle("hidden", !on);
+    $("consoleInput").placeholder = on ? "running… (Ctrl+C or Stop to interrupt)" : "run a command in the current folder (cd works too, Ctrl+C stops)";
+  }
+  const stopConsole = () => S.consoleRun?.abort();
+  $("btnConsoleStop").onclick = stopConsole;
+  $("consoleForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (S.consoleRun) return toast("A command is still running: Ctrl+C or Stop to interrupt it", "bad");
+    const v = $("consoleInput").value; $("consoleInput").value = ""; runConsole(v);
+  });
   $("consoleInput").addEventListener("keydown", (e) => {
     if (e.key === "ArrowUp" && S.consoleIdx > 0) { e.preventDefault(); $("consoleInput").value = S.consoleHist[--S.consoleIdx]; }
     if (e.key === "ArrowDown") { e.preventDefault(); S.consoleIdx = Math.min(S.consoleHist.length, S.consoleIdx + 1); $("consoleInput").value = S.consoleHist[S.consoleIdx] || ""; }
     if (e.key === "Escape") $("consoleInput").blur();
+    if (e.ctrlKey && e.key.toLowerCase() === "c" && S.consoleRun && !window.getSelection().toString()) { e.preventDefault(); stopConsole(); }
   });
 
   function showTab(name) {
     document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
-    $("tab-transfers").classList.toggle("hidden", name !== "transfers");
-    $("tab-console").classList.toggle("hidden", name !== "console");
+    document.querySelectorAll(".tab-body").forEach((b) => b.classList.toggle("hidden", b.id !== "tab-" + name));
+    $("btnClearJobs").classList.toggle("hidden", name !== "transfers");
+    $("btnSlurmRefresh").classList.toggle("hidden", name !== "slurm");
+    $("btnEmptyTrash").classList.toggle("hidden", name !== "trash");
     $("bottom").classList.remove("collapsed");
     $("btnToggleBottom").textContent = "▾";
     if (name === "console") $("consoleInput").focus();
+    if (name === "slurm") loadSlurm();
+    if (name === "usage") loadUsage();
+    if (name === "trash") loadTrash();
   }
   document.querySelectorAll(".tab").forEach((t) => (t.onclick = () => showTab(t.dataset.tab)));
   $("btnToggleBottom").onclick = () => {
@@ -733,8 +1033,16 @@
       else items.push(["Preview", "Space", () => showPreview(r, { line: r.line })]);
       if (S.search) items.push(["Show in folder", "", () => go(parent(r.path), { select: r.path })]);
       items.push(null);
-      items.push([`Download ${rows.length > 1 ? rows.length + " items " : ""}to Mac (scp)`, "D", () => download(rows)]);
+      items.push([`Download ${rows.length > 1 ? rows.length + " items " : ""}to Mac`, "D", () => download(rows)]);
+      items.push(["Download as one .tar.gz", "", () => download(rows, "archive")]);
+      if (S.info.rsync?.enabled) items.push(["Sync to Mac (rsync, resumable)", "", () => download(rows, "sync")]);
       if (!r.d) items.push(["Save as… (browser)", "", () => (location.href = rawUrl(r.path, true))]);
+      if (!r.d) items.push(["Follow (tail -F)", "", () => startFollow(r)]);
+      if (!r.d && SCRIPT_EXT.includes((r.name.split(".").pop() || "").toLowerCase())) items.push(["Submit with sbatch", "", () => submitJob(r)]);
+      items.push(null);
+      items.push(["Copy", "⌘C", () => clipSel("copy")]);
+      items.push(["Cut", "⌘X", () => clipSel("cut")]);
+      if (r.d && S.clip && S.clip.host === S.info.host) items.push(["Paste into folder", "", () => paste(r.path)]);
       items.push(["Copy path", "", () => copy(rows.map((x) => x.path).join("\n"))]);
       items.push(["Copy scp command", "", () => copy(`scp ${r.d ? "-r " : ""}${S.info.host}:'${r.path}' .`)]);
       items.push(["Open in Terminal", "T", () => openInTerminal(r.d ? r.path : parent(r.path))]);
@@ -744,7 +1052,8 @@
       if (!S.search) {
         items.push(null);
         items.push(["Rename", "F2", renameSel]);
-        items.push(["Delete", "Del", deleteSel, "danger"]);
+        items.push(["Move to trash", "Del", () => deleteSel(), "danger"]);
+        items.push(["Delete permanently", "⇧Del", () => deleteSel(true), "danger"]);
       }
     }
     const m = $("ctxMenu"); m.innerHTML = "";
@@ -791,13 +1100,16 @@
       case " ": e.preventDefault(); if (r && !r.d) showPreview(r, { line: r.line }); break;
       case "/": e.preventDefault(); $("filterInput").focus(); break;
       case "F2": e.preventDefault(); renameSel(); break;
-      case "Delete": e.preventDefault(); deleteSel(); break;
+      case "Delete": e.preventDefault(); deleteSel(e.shiftKey); break;
       case "`": e.preventDefault(); showTab("console"); break;
       case "~": e.preventDefault(); go(S.info.home); break;
       default:
         if (e.metaKey || e.ctrlKey) {
           if (e.key.toLowerCase() === "a") { e.preventDefault(); S.rows.forEach((x) => !x.up && S.sel.add(x.path)); paintRows(); }
-          if (e.key === "Backspace") { e.preventDefault(); deleteSel(); }
+          if (e.key === "Backspace") { e.preventDefault(); deleteSel(e.shiftKey); }
+          if (e.key.toLowerCase() === "c" && !e.shiftKey) { e.preventDefault(); clipSel("copy"); }
+          if (e.key.toLowerCase() === "x") { e.preventDefault(); clipSel("cut"); }
+          if (e.key.toLowerCase() === "v") { e.preventDefault(); paste(); }
           if (e.key.toLowerCase() === "f") { e.preventDefault(); $("searchInput").focus(); }
           return;
         }
@@ -834,7 +1146,10 @@
   $("btnNewFolder").onclick = newFolder;
   $("btnNewFile").onclick = newFile;
   $("btnRename").onclick = renameSel;
-  $("btnDelete").onclick = deleteSel;
+  $("btnDelete").onclick = (e) => deleteSel(e.shiftKey);
+  $("btnArchive").onclick = () => download(targetRows(), "archive");
+  $("btnPaste").onclick = () => paste();
+  $("btnSizes").onclick = measureSizes;
   $("btnOpenTerm").onclick = () => openInTerminal(S.cwd);
   $("btnOpenCode").onclick = () => openInVSCode(S.cwd, true);
   $("btnCloseSearch").onclick = closeSearch;
@@ -907,6 +1222,10 @@
     $("hostLabel").title = `${info.hostname} — click to switch SSH host`;
     $("hostLabel").style.cursor = "pointer";
     $("dlDir").textContent = tilde2(info.download_dir);
+    renderXferMode();
+    if (S.clip && S.clip.host !== info.host) S.clip = null;
+    updatePasteBtn();
+    loadQuota();
     S.back = []; S.fwd = [];
     S.cwd = info.home;
     clearPreview();
@@ -937,6 +1256,7 @@
   async function boot() {
     if (!TOKEN) { document.body.innerHTML = `<div class="placeholder" style="padding:60px;text-align:center">Missing access token — open the URL printed by <code>server.py</code>.</div>`; return; }
     try {
+      await api("/api/session", { method: "POST", body: {} });  // cookie for <img>/<video>/download URLs
       const info = await api("/api/info");
       await applyInfo(info);
     } catch (e) {
