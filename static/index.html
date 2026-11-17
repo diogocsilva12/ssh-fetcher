@@ -6,89 +6,129 @@
   <title>ssh-fetcher</title>
   <link rel="stylesheet" href="/style.css" />
   <!-- Bundled in static/vendor (no CDN): highlight.js 11.9.0, marked 12.0.2, DOMPurify 3.1.6 -->
-  <link rel="stylesheet" href="/vendor/github-dark.min.css" />
+  <link rel="stylesheet" href="/vendor/github-dark.min.css" media="(prefers-color-scheme: dark)" />
+  <link rel="stylesheet" href="/vendor/github.min.css" media="(prefers-color-scheme: light)" />
   <script defer src="/vendor/highlight.min.js"></script>
   <script defer src="/vendor/marked.min.js"></script>
   <script defer src="/vendor/purify.min.js"></script>
 </head>
 <body>
+  <!-- Line icons, 16px grid, drawn with currentColor -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+    <symbol id="i-folder" viewBox="0 0 16 16"><path d="M1.75 4.25c0-.55.45-1 1-1h3.4l1.5 1.5h5.6c.55 0 1 .45 1 1v6.5c0 .55-.45 1-1 1H2.75c-.55 0-1-.45-1-1z"/></symbol>
+    <symbol id="i-file" viewBox="0 0 16 16"><path d="M4 1.75h5l3.25 3.25v9.25H4z"/><path d="M9 1.75V5h3.25"/></symbol>
+    <symbol id="i-file-text" viewBox="0 0 16 16"><path d="M4 1.75h5l3.25 3.25v9.25H4z"/><path d="M9 1.75V5h3.25M6 8.25h4M6 10.75h4"/></symbol>
+    <symbol id="i-file-code" viewBox="0 0 16 16"><path d="M4 1.75h5l3.25 3.25v9.25H4z"/><path d="M9 1.75V5h3.25M7 8l-1.25 1.5L7 11M9 8l1.25 1.5L9 11"/></symbol>
+    <symbol id="i-file-data" viewBox="0 0 16 16"><path d="M4 1.75h5l3.25 3.25v9.25H4z"/><path d="M9 1.75V5h3.25M6 8h4.25M6 10.5h4.25M8.1 8v4.75"/></symbol>
+    <symbol id="i-image" viewBox="0 0 16 16"><rect x="2" y="2.75" width="12" height="10.5" rx="1"/><circle cx="5.75" cy="6.25" r="1.1"/><path d="M2.5 12l3.5-3.5 2.5 2.5 2-2 3 3"/></symbol>
+    <symbol id="i-pdf" viewBox="0 0 16 16"><path d="M4 1.75h5l3.25 3.25v9.25H4z"/><path d="M9 1.75V5h3.25M6 9.5h4M6 11.75h2.5"/></symbol>
+    <symbol id="i-media" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1"/><path d="M6.75 6v4l3.25-2z"/></symbol>
+    <symbol id="i-archive" viewBox="0 0 16 16"><rect x="2" y="2.75" width="12" height="3" rx=".5"/><path d="M3 5.75v7.5h10v-7.5M6.5 8.25h3"/></symbol>
+    <symbol id="i-log" viewBox="0 0 16 16"><path d="M4 1.75h5l3.25 3.25v9.25H4z"/><path d="M9 1.75V5h3.25M6 8h1M8.5 8h1.75M6 10.5h1M8.5 10.5h1.75"/></symbol>
+    <symbol id="i-exec" viewBox="0 0 16 16"><rect x="2" y="2.75" width="12" height="10.5" rx="1"/><path d="M4.5 6.5L6.5 8l-2 1.5M7.75 10h3"/></symbol>
+    <symbol id="i-link" viewBox="0 0 16 16"><path d="M6.75 9.25l2.5-2.5M7.5 4.75l1-1a2.47 2.47 0 013.5 3.5l-1 1M8.5 11.25l-1 1a2.47 2.47 0 01-3.5-3.5l1-1"/></symbol>
+    <symbol id="i-up" viewBox="0 0 16 16"><path d="M8 13V3.5M4 7.25L8 3.25l4 4"/></symbol>
+    <symbol id="i-back" viewBox="0 0 16 16"><path d="M13 8H3.5M7.25 4L3.25 8l4 4"/></symbol>
+    <symbol id="i-fwd" viewBox="0 0 16 16"><path d="M3 8h9.5M8.75 4l4 4-4 4"/></symbol>
+    <symbol id="i-parent" viewBox="0 0 16 16"><path d="M6 12.5L2.75 9.25 6 6"/><path d="M3 9.25h6.5a3.5 3.5 0 003.5-3.5V3"/></symbol>
+    <symbol id="i-home" viewBox="0 0 16 16"><path d="M2.5 7.25L8 2.5l5.5 4.75M4 6v7.25h3v-3.5h2v3.5h3V6"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 16 16"><path d="M13 3.5v3h-3M3 12.5v-3h3"/><path d="M12.6 6.5A5 5 0 003.9 5.2M3.4 9.5a5 5 0 008.7 1.3"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 16 16"><path d="M8 10.5V2.75M4.75 5.75L8 2.5l3.25 3.25M2.75 10.5v2.75h10.5V10.5"/></symbol>
+    <symbol id="i-download" viewBox="0 0 16 16"><path d="M8 2.5v7.75M4.75 7.25L8 10.5l3.25-3.25M2.75 10.5v2.75h10.5V10.5"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+    <symbol id="i-pencil" viewBox="0 0 16 16"><path d="M10.25 3.25l2.5 2.5-7.5 7.5H2.75v-2.5z"/><path d="M8.75 4.75l2.5 2.5"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 16 16"><path d="M2.75 4.25h10.5M6.25 4.25V2.75h3.5v1.5M4 4.25l.6 9h6.8l.6-9M6.75 6.75v4M9.25 6.75v4"/></symbol>
+    <symbol id="i-paste" viewBox="0 0 16 16"><rect x="3.25" y="3" width="9.5" height="10.75" rx="1"/><path d="M6 3V2h4v1.75H6z"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 16 16"><rect x="5.25" y="5.25" width="8" height="8" rx="1"/><path d="M10.75 5.25v-2.5h-8v8h2.5"/></symbol>
+    <symbol id="i-cut" viewBox="0 0 16 16"><circle cx="4.5" cy="11.5" r="2"/><circle cx="11.5" cy="11.5" r="2"/><path d="M5.9 10.1L12 2.5M10.1 10.1L4 2.5"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 16 16"><path d="M2.75 13.25h10.5M4.5 13.25V8.5M8 13.25V3.5M11.5 13.25V6"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 16 16"><path d="M3 5l3 3-3 3M7.75 11.5h5.25"/></symbol>
+    <symbol id="i-code" viewBox="0 0 16 16"><path d="M5.5 4.5L2 8l3.5 3.5M10.5 4.5L14 8l-3.5 3.5"/></symbol>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.25"/><path d="M10.25 10.25l3.25 3.25"/></symbol>
+    <symbol id="i-x" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 16 16"><path d="M4.5 6.25L8 9.75l3.5-3.5"/></symbol>
+    <symbol id="i-play" viewBox="0 0 16 16"><path d="M5 3.5v9l7-4.5z"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1"/></symbol>
+    <symbol id="i-external" viewBox="0 0 16 16"><path d="M9.25 2.75h4v4M13 3L7.5 8.5M11.5 9.5v3.75H2.75V4.5H6.5"/></symbol>
+    <symbol id="i-wrap" viewBox="0 0 16 16"><path d="M2.5 4h11M2.5 8h9a2 2 0 010 4H8M9.5 10.5L8 12l1.5 1.5M2.5 12h3"/></symbol>
+    <symbol id="i-keyboard" viewBox="0 0 16 16"><rect x="1.75" y="4" width="12.5" height="8" rx="1"/><path d="M4.5 6.5h.01M7 6.5h.01M9.5 6.5h.01M12 6.5h.01M5 9.5h6"/></symbol>
+    <symbol id="i-bookmark" viewBox="0 0 16 16"><path d="M4.25 2.25h7.5v11.5L8 11l-3.75 2.75z"/></symbol>
+    <symbol id="i-server" viewBox="0 0 16 16"><rect x="2.5" y="2.75" width="11" height="4.25" rx="1"/><rect x="2.5" y="9" width="11" height="4.25" rx="1"/><path d="M5 4.9h.01M5 11.1h.01"/></symbol>
+  </svg>
+
   <header class="topbar">
-    <div class="brand">
-      <span class="dot" id="connDot"></span>
-      <span id="hostLabel">connecting…</span>
-    </div>
+    <button class="host" id="hostLabel" title="Switch SSH host"><span class="dot" id="connDot"></span><span id="hostText">connecting…</span><svg class="ic sm"><use href="#i-chev"/></svg></button>
     <div class="nav">
-      <button class="icon" id="btnBack" title="Back (Alt+←)">←</button>
-      <button class="icon" id="btnFwd" title="Forward (Alt+→)">→</button>
-      <button class="icon" id="btnUp" title="Parent folder (Backspace)">↑</button>
-      <button class="icon" id="btnHome" title="Home (~)">⌂</button>
-      <button class="icon" id="btnRefresh" title="Refresh (R)">⟳</button>
+      <button class="icon" id="btnBack" title="Back (Alt+←)"><svg class="ic"><use href="#i-back"/></svg></button>
+      <button class="icon" id="btnFwd" title="Forward (Alt+→)"><svg class="ic"><use href="#i-fwd"/></svg></button>
+      <button class="icon" id="btnUp" title="Parent folder (Backspace)"><svg class="ic"><use href="#i-up"/></svg></button>
+      <button class="icon" id="btnHome" title="Home (~)"><svg class="ic"><use href="#i-home"/></svg></button>
+      <button class="icon" id="btnRefresh" title="Refresh (R)"><svg class="ic"><use href="#i-refresh"/></svg></button>
     </div>
-    <div class="pathbox" id="pathBox" title="Click to edit path (Ctrl/⌘+L)">
+    <div class="pathbox" id="pathBox" title="Click to edit the path (⌘L)">
       <div class="crumbs" id="crumbs"></div>
       <input id="pathInput" spellcheck="false" autocomplete="off" />
     </div>
     <form class="search" id="searchForm">
-      <select id="searchMode" title="Search mode">
-        <option value="name">Name</option>
-        <option value="content">Content</option>
+      <svg class="ic sm search-ic"><use href="#i-search"/></svg>
+      <input id="searchInput" placeholder="Search this folder…" spellcheck="false" />
+      <select id="searchMode" title="Search file names or file contents">
+        <option value="name">Names</option>
+        <option value="content">Contents</option>
       </select>
-      <input id="searchInput" placeholder="Search in this folder (recursive)…" spellcheck="false" />
-      <label class="chk" title="Regular expression"><input type="checkbox" id="searchRegex" />.*</label>
-      <label class="chk" title="Case sensitive"><input type="checkbox" id="searchCase" />Aa</label>
-      <button type="submit">Search</button>
+      <label class="toggle" title="Regular expression"><input type="checkbox" id="searchRegex" /><span>.*</span></label>
+      <label class="toggle" title="Match case"><input type="checkbox" id="searchCase" /><span>Aa</span></label>
     </form>
   </header>
 
   <div class="main">
     <aside class="sidebar">
-      <div class="side-title">Places <button class="mini" id="btnAddBookmark" title="Bookmark current folder">＋</button></div>
-      <ul id="bookmarks"></ul>
-      <div class="side-title">Local downloads</div>
-      <div class="dl-dir" id="dlDir" title="Where downloads are saved"></div>
-      <div class="side-actions">
-        <button class="mini wide" id="btnChangeDl">Change…</button>
-        <button class="mini wide" id="btnOpenDl">Open</button>
-      </div>
-      <div class="xfer-mode" id="xferMode"></div>
-      <div class="side-title">Quota <span><button class="mini" id="btnQuotaRefresh" title="Refresh quota">⟳</button> <button class="mini" id="btnUsage" title="Quota and billing details">Details</button></span></div>
-      <div id="quota" class="quota"><div class="muted">…</div></div>
-      <div class="side-title">Shortcuts</div>
-      <div class="help">
-        <div><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Enter</kbd> open</div>
-        <div><kbd>⌫</kbd> parent · <kbd>Space</kbd> preview</div>
-        <div><kbd>/</kbd> filter · <kbd>⌘L</kbd> path</div>
-        <div><kbd>D</kbd> download · <kbd>Del</kbd> delete</div>
-        <div><kbd>F2</kbd> rename · <kbd>`</kbd> console</div>
-        <div><kbd>T</kbd> terminal · <kbd>V</kbd> VS Code</div>
-        <div><kbd>⌘C</kbd><kbd>⌘X</kbd><kbd>⌘V</kbd> copy/cut/paste</div>
-        <div><kbd>⇧Del</kbd> delete permanently</div>
-      </div>
+      <section>
+        <div class="side-title">Places <button class="icon xs" id="btnAddBookmark" title="Bookmark this folder"><svg class="ic sm"><use href="#i-plus"/></svg></button></div>
+        <ul id="bookmarks"></ul>
+      </section>
+      <section>
+        <div class="side-title">Downloads</div>
+        <div class="dl-dir" id="dlDir" title="Where downloads are saved on this computer"></div>
+        <div class="side-actions">
+          <button class="sm" id="btnOpenDl">Open</button>
+          <button class="sm" id="btnChangeDl">Change…</button>
+        </div>
+        <div class="xfer-mode" id="xferMode"></div>
+      </section>
+      <section>
+        <div class="side-title">Storage <button class="icon xs" id="btnQuotaRefresh" title="Refresh quota"><svg class="ic sm"><use href="#i-refresh"/></svg></button></div>
+        <div id="quota" class="quota"><div class="muted">Loading…</div></div>
+        <button class="link" id="btnUsage">Quota and billing details</button>
+      </section>
+      <div class="grow"></div>
+      <button class="link shortcuts-link" id="btnShortcuts"><svg class="ic sm"><use href="#i-keyboard"/></svg>Keyboard shortcuts <kbd>?</kbd></button>
     </aside>
 
     <section class="files">
       <div class="toolbar">
-        <button id="btnUploadFiles" title="Upload files from your Mac (scp)">⬆ Upload files</button>
-        <button id="btnUploadDir" title="Upload folders from your Mac (scp -r)">⬆ Upload folder</button>
-        <button id="btnDownload" title="Download selection to your Mac (D)">⬇ Download</button>
-        <button id="btnArchive" title="Download the selection as one .tar.gz">⬇ .tar.gz</button>
-        <span class="sep"></span>
-        <button id="btnNewFolder">＋ Folder</button>
-        <button id="btnNewFile">＋ File</button>
-        <button id="btnRename">Rename</button>
-        <button id="btnDelete" class="danger" title="Move to trash (Del). Shift+Del deletes permanently">Delete</button>
-        <button id="btnPaste" class="hidden" title="Paste here (⌘V)">Paste</button>
-        <button id="btnSizes" title="Measure folder sizes here (du) and sort by size">Sizes</button>
-        <span class="sep"></span>
-        <button id="btnOpenTerm" title="Open current folder in local Terminal over SSH (T)">&gt;_ Terminal</button>
-        <button id="btnOpenCode" title="Open current folder in VS Code Remote-SSH (V)">VS Code</button>
-        <span class="grow"></span>
-        <input id="filterInput" placeholder="Filter…  (/)" spellcheck="false" />
-        <label class="chk"><input type="checkbox" id="showHidden" /> hidden</label>
+        <div class="group">
+          <button id="btnUploadMenu" title="Upload from this computer"><svg class="ic"><use href="#i-upload"/></svg>Upload<svg class="ic sm caret"><use href="#i-chev"/></svg></button>
+          <button id="btnDownloadMenu" title="Download the selection (D)"><svg class="ic"><use href="#i-download"/></svg>Download<svg class="ic sm caret"><use href="#i-chev"/></svg></button>
+          <button id="btnNewMenu" title="New folder or file"><svg class="ic"><use href="#i-plus"/></svg>New<svg class="ic sm caret"><use href="#i-chev"/></svg></button>
+        </div>
+        <div class="group">
+          <button class="icon" id="btnRename" title="Rename (F2)"><svg class="ic"><use href="#i-pencil"/></svg></button>
+          <button class="icon danger" id="btnDelete" title="Move to trash (Del). Shift-click to delete permanently"><svg class="ic"><use href="#i-trash"/></svg></button>
+          <button class="icon" id="btnSizes" title="Measure folder sizes here and sort by size"><svg class="ic"><use href="#i-chart"/></svg></button>
+          <button class="accent hidden" id="btnPaste" title="Paste here (⌘V)"><svg class="ic"><use href="#i-paste"/></svg><span id="pasteLabel">Paste</span></button>
+        </div>
+        <div class="grow"></div>
+        <div class="group">
+          <button class="icon" id="btnOpenTerm" title="Open this folder in a local terminal over SSH (T)"><svg class="ic"><use href="#i-terminal"/></svg></button>
+          <button class="icon" id="btnOpenCode" title="Open this folder in VS Code Remote-SSH (V)"><svg class="ic"><use href="#i-code"/></svg></button>
+        </div>
+        <input id="filterInput" placeholder="Filter  /" spellcheck="false" />
+        <label class="toggle" title="Show hidden files (H)"><input type="checkbox" id="showHidden" /><span>Hidden</span></label>
       </div>
       <div class="search-banner hidden" id="searchBanner">
         <span id="searchSummary"></span>
-        <button class="mini" id="btnCloseSearch">✕ close results</button>
+        <button class="sm" id="btnCloseSearch">Close results</button>
       </div>
       <div class="table-wrap" id="tableWrap" tabindex="0">
         <table id="fileTable">
@@ -97,7 +137,7 @@
               <th data-sort="n" class="col-name">Name</th>
               <th data-sort="s" class="col-size">Size</th>
               <th data-sort="m" class="col-date">Modified</th>
-              <th data-sort="p" class="col-perm">Perms</th>
+              <th data-sort="p" class="col-perm">Permissions</th>
               <th data-sort="o" class="col-owner">Owner</th>
             </tr>
           </thead>
@@ -126,22 +166,22 @@
     <div class="tabs">
       <button class="tab active" data-tab="transfers">Transfers <span class="badge hidden" id="jobBadge"></span></button>
       <button class="tab" data-tab="console">Console</button>
-      <button class="tab" data-tab="slurm">Slurm <span class="badge hidden" id="slurmBadge"></span></button>
+      <button class="tab" data-tab="slurm">Jobs <span class="badge hidden" id="slurmBadge"></span></button>
       <button class="tab" data-tab="usage">Usage</button>
       <button class="tab" data-tab="trash">Trash</button>
       <span class="grow"></span>
-      <button class="mini" id="btnClearJobs">Clear finished</button>
-      <button class="mini hidden" id="btnSlurmRefresh">⟳ Refresh</button>
-      <button class="mini hidden danger" id="btnEmptyTrash">Empty trash</button>
-      <button class="mini" id="btnToggleBottom">▾</button>
+      <button class="sm" id="btnClearJobs">Clear finished</button>
+      <button class="sm hidden" id="btnSlurmRefresh">Refresh</button>
+      <button class="sm hidden danger" id="btnEmptyTrash">Empty trash</button>
+      <button class="icon xs" id="btnToggleBottom" title="Collapse panel"><svg class="ic sm"><use href="#i-chev"/></svg></button>
     </div>
     <div class="tab-body" id="tab-transfers"><div id="jobs"></div></div>
     <div class="tab-body hidden" id="tab-console">
       <pre id="consoleOut"></pre>
       <form id="consoleForm">
         <span class="prompt" id="consolePrompt">$</span>
-        <input id="consoleInput" spellcheck="false" autocomplete="off" placeholder="run a command in the current folder (cd works too, Ctrl+C stops)" />
-        <button type="button" class="mini hidden" id="btnConsoleStop">⏹ Stop</button>
+        <input id="consoleInput" spellcheck="false" autocomplete="off" placeholder="Run a command in this folder (cd works, Ctrl+C stops)" />
+        <button type="button" class="sm hidden" id="btnConsoleStop"><svg class="ic sm"><use href="#i-stop"/></svg>Stop</button>
       </form>
     </div>
     <div class="tab-body hidden" id="tab-slurm"><div id="slurmJobs"></div></div>
@@ -149,8 +189,42 @@
     <div class="tab-body hidden" id="tab-trash"><div id="trashList"></div></div>
   </footer>
 
+  <div class="modal hidden" id="shortcuts">
+    <div class="modal-card">
+      <div class="modal-head">Keyboard shortcuts <button class="icon xs" id="btnCloseShortcuts" title="Close (Esc)"><svg class="ic sm"><use href="#i-x"/></svg></button></div>
+      <div class="kb-grid">
+        <div><h5>Navigate</h5>
+          <p><kbd>↑</kbd><kbd>↓</kbd><span>Move</span></p>
+          <p><kbd>Enter</kbd><span>Open</span></p>
+          <p><kbd>⌫</kbd><span>Parent folder</span></p>
+          <p><kbd>Alt ←</kbd><kbd>Alt →</kbd><span>Back / forward</span></p>
+          <p><kbd>~</kbd><span>Home</span></p>
+          <p><kbd>⌘L</kbd><span>Edit path</span></p>
+          <p><kbd>/</kbd><span>Filter</span></p>
+          <p><kbd>⌘F</kbd><span>Search</span></p>
+        </div>
+        <div><h5>Files</h5>
+          <p><kbd>Space</kbd><span>Preview</span></p>
+          <p><kbd>D</kbd><span>Download</span></p>
+          <p><kbd>F2</kbd><span>Rename</span></p>
+          <p><kbd>⌘C</kbd><kbd>⌘X</kbd><kbd>⌘V</kbd><span>Copy, cut, paste</span></p>
+          <p><kbd>Del</kbd><span>Move to trash</span></p>
+          <p><kbd>⇧Del</kbd><span>Delete permanently</span></p>
+          <p><kbd>H</kbd><span>Show hidden files</span></p>
+        </div>
+        <div><h5>Tools</h5>
+          <p><kbd>T</kbd><span>Open in Terminal</span></p>
+          <p><kbd>V</kbd><span>Open in VS Code</span></p>
+          <p><kbd>`</kbd><span>Console</span></p>
+          <p><kbd>R</kbd><span>Refresh</span></p>
+          <p><kbd>?</kbd><span>This list</span></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="drop-overlay hidden" id="dropOverlay">
-    <div>Drop files to upload to<br /><b id="dropTarget"></b></div>
+    <div><svg class="ic lg"><use href="#i-upload"/></svg><div>Drop files to upload to</div><b id="dropTarget"></b></div>
   </div>
   <div class="ctx hidden" id="ctxMenu"></div>
   <div class="toasts" id="toasts"></div>

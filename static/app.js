@@ -1,4 +1,4 @@
-/* ssh-fetcher front-end — vanilla JS, no build step. */
+/* ssh-fetcher front-end: vanilla JS, no build step. */
 (() => {
   "use strict";
 
@@ -31,6 +31,7 @@
   };
 
   const $ = (id) => document.getElementById(id);
+  const ic = (name, cls = "") => `<svg class="ic ${cls}"><use href="#i-${name}"/></svg>`;
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const join = (a, b) => (a === "/" ? "" : a.replace(/\/+$/, "")) + "/" + b;
   const parent = (p) => { const i = p.replace(/\/+$/, "").lastIndexOf("/"); return i <= 0 ? "/" : p.slice(0, i); };
@@ -104,20 +105,23 @@
   const busy = (on) => $("loading").classList.toggle("hidden", !on);
 
   // ------------------------------------------------------------------ icons
+  const EXT_ICON = [
+    [["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "tif", "tiff"], "image", "t-image"],
+    [["pdf"], "pdf", "t-pdf"],
+    [["mp4", "mov", "webm", "mkv", "avi", "mp3", "wav", "flac", "ogg", "m4a"], "media", ""],
+    [["zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar", "zst"], "archive", "t-archive"],
+    [["py", "c", "h", "cpp", "hpp", "cu", "f90", "f", "js", "ts", "go", "rs", "java", "jl", "r", "sh", "bash", "slurm", "sbatch", "mk", "cmake", "ipynb"], "file-code", "t-code"],
+    [["log", "out", "err"], "log", ""],
+    [["csv", "tsv", "json", "yaml", "yml", "toml", "xml", "ini", "cfg", "conf", "h5", "nc"], "file-data", ""],
+    [["md", "txt", "rst", "tex"], "file-text", ""],
+  ];
   function icon(r) {
-    if (r.up) return "↩";
-    if (r.d) return r.l ? "🔗" : "📁";
+    if (r.up) return ic("parent", "fi");
+    if (r.d) return ic(r.l ? "link" : "folder", "fi t-dir");
     const ext = (r.name.split(".").pop() || "").toLowerCase();
-    if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico"].includes(ext)) return "🖼";
-    if (["pdf"].includes(ext)) return "📕";
-    if (["mp4", "mov", "webm", "mkv", "avi"].includes(ext)) return "🎞";
-    if (["mp3", "wav", "flac", "ogg", "m4a"].includes(ext)) return "🎵";
-    if (["zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar", "zst"].includes(ext)) return "📦";
-    if (["py", "c", "h", "cpp", "hpp", "cu", "f90", "f", "js", "ts", "go", "rs", "java", "jl", "r", "sh", "bash", "slurm", "sbatch", "mk", "cmake"].includes(ext)) return "📜";
-    if (["log", "out", "err"].includes(ext)) return "🧾";
-    if (["csv", "tsv", "json", "yaml", "yml", "toml", "xml", "ini", "cfg", "conf"].includes(ext)) return "🗂";
-    if (r.p && r.p.includes("x")) return "⚙";
-    return "📄";
+    for (const [exts, name, cls] of EXT_ICON) if (exts.includes(ext)) return ic(name, "fi " + cls);
+    if (r.p && r.p.includes("x")) return ic("exec", "fi");
+    return ic("file", "fi");
   }
 
   // ------------------------------------------------------------------ navigation
@@ -173,7 +177,7 @@
     $("btnUp").disabled = S.cwd === "/";
     $("consolePrompt").textContent = `${S.info?.user || ""}@${S.info?.hostname?.split(".")[0] || ""}:${tilde(S.cwd)}$`;
     $("dropTarget").textContent = S.cwd;
-    document.title = `${base(S.cwd)} — ${S.info?.host || "ssh-fetcher"}`;
+    document.title = `${base(S.cwd)} · ${S.info?.host || "ssh-fetcher"}`;
     document.querySelectorAll("#bookmarks li").forEach((li) => li.classList.toggle("active", li.dataset.path === S.cwd));
     renderStatus();
   }
@@ -221,7 +225,7 @@
       const tr = document.createElement("tr");
       tr.dataset.i = i;
       tr.className = [r.d ? "dir" : "", r.b ? "broken" : "", r.hit ? "hit" : "", S.sel.has(r.path) ? "sel" : "", i === S.cursor ? "cursor" : ""].join(" ");
-      let name = `<span class="ico">${icon(r)}</span>${esc(r.name)}`;
+      let name = `${icon(r)}${esc(r.name)}`;
       if (r.l && r.t) name += `<span class="link">→ ${esc(r.t)}</span>`;
       if (r.hit) name += `<span class="sub">:${r.line}</span><span class="hit-text">${highlightQuery(r.text.trim(), S.search.query)}</span>`;
       tr.innerHTML =
@@ -316,7 +320,7 @@
     try { d = await api("/api/preview", { params: { path: r.path } }); }
     catch (e) {
       if (S.previewPath !== r.path) return;
-      $("previewBody").innerHTML = `<div class="placeholder">⚠ ${esc(e.message)}</div>`;
+      $("previewBody").innerHTML = `<div class="placeholder error">${esc(e.message)}</div>`;
       return;
     }
     if (S.previewPath !== r.path) return; // user moved on
@@ -332,7 +336,7 @@
       else if (d.mime.startsWith("video/")) body.innerHTML = `<video src="${src}" controls></video>`;
       else body.innerHTML = `<audio src="${src}" controls></audio>`;
     } else if (d.kind === "binary") {
-      body.innerHTML = `<div class="trunc-note">Binary file — showing the first bytes as hex.</div><div class="code"><pre>${esc(d.content)}</pre></div>`;
+      body.innerHTML = `<div class="trunc-note">Binary file: showing the first bytes as hex.</div><div class="code"><pre>${esc(d.content)}</pre></div>`;
     } else if (d.kind === "dir") {
       body.innerHTML = `<div class="placeholder">Folder</div>`;
     } else {
@@ -344,7 +348,7 @@
 
   function renderText(d, ext, line, mode) {
     const body = $("previewBody");
-    const note = d.truncated ? `<div class="trunc-note">Large file — showing the first ${fmtSize(d.content.length)} of ${fmtSize(d.size)}. Download to see everything.</div>` : "";
+    const note = d.truncated ? `<div class="trunc-note">Large file: showing the first ${fmtSize(d.content.length)} of ${fmtSize(d.size)}. Download to see everything.</div>` : "";
     mode = mode || (ext === "md" && canRenderMd() ? "md" : (["csv", "tsv"].includes(ext) ? "table" : "code"));
     if (mode === "md") {
       // Remote files are untrusted (shared filesystem): never render Markdown HTML unsanitised.
@@ -381,28 +385,37 @@
     if (line) setTimeout(() => $("hlLine")?.scrollIntoView({ block: "center" }), 0);
   }
 
+  // Text buttons for the main actions, icon buttons (with tooltips) for the rest.
+  function actionButton(container, label, title, fn, iconName) {
+    const b = document.createElement("button");
+    if (!label) b.className = "icon";
+    b.title = title;
+    b.innerHTML = (iconName ? ic(iconName) : "") + (label ? esc(label) : "");
+    b.onclick = fn;
+    container.appendChild(b);
+    return b;
+  }
   function setPreviewActions(r, d) {
     const a = $("previewActions"); a.innerHTML = "";
-    const btn = (label, title, fn) => { const b = document.createElement("button"); b.className = "mini"; b.textContent = label; b.title = title; b.onclick = fn; a.appendChild(b); };
-    btn("⬇ scp", "Download to your Mac via scp", () => download([r]));
-    btn("Save as…", "Download through the browser", () => { location.href = rawUrl(r.path, true); });
-    if (d && (d.kind === "media")) btn("↗", "Open in new tab", () => window.open(rawUrl(r.path), "_blank"));
+    const btn = (label, title, fn, iconName) => actionButton(a, label, title, fn, iconName);
     if (d && d.kind === "text") {
       const ext = (r.path.split(".").pop() || "").toLowerCase();
+      if (!d.truncated) btn("Edit", "Edit and save back to the remote", () => editFile(r, d), "pencil");
+      btn("Follow", "Show new lines as the file grows (tail -F)", () => startFollow(r), "play");
       if (ext === "md" && canRenderMd()) {
         let raw = false;
-        btn("Raw/MD", "Toggle markdown rendering", () => { raw = !raw; renderText(d, ext, null, raw ? "code" : "md"); });
+        btn("Source", "Toggle between rendered Markdown and source", () => { raw = !raw; renderText(d, ext, null, raw ? "code" : "md"); });
       }
       if (["csv", "tsv"].includes(ext)) {
         let raw = false;
-        btn("Raw/Table", "Toggle table view", () => { raw = !raw; renderText(d, ext, null, raw ? "code" : "table"); });
+        btn("Source", "Toggle between table and source", () => { raw = !raw; renderText(d, ext, null, raw ? "code" : "table"); });
       }
-      btn("Wrap", "Toggle line wrap", () => $("previewBody").classList.toggle("wrap"));
-      btn("▶ Follow", "Show new lines as the file grows (tail -F)", () => startFollow(r));
-      if (!d.truncated) btn("✎ Edit", "Edit and save back to the remote", () => editFile(r, d));
+      btn("", "Wrap long lines", () => $("previewBody").classList.toggle("wrap"), "wrap");
     }
-    btn("VS Code", "Open file in VS Code Remote-SSH", () => openInVSCode(r.path, false));
-    btn("⧉", "Copy remote path", () => copy(r.path));
+    if (d && d.kind === "media") btn("", "Open in a new tab", () => window.open(rawUrl(r.path), "_blank"), "external");
+    btn("", "Download to this computer (D)", () => download([r]), "download");
+    btn("", "Open in VS Code", () => openInVSCode(r.path, false), "code");
+    btn("", "Copy remote path", () => copy(r.path), "copy");
   }
 
   function editFile(r, d) {
@@ -426,9 +439,8 @@
         toast(e.message, "bad");
       }
     };
-    const mk = (label, fn) => { const b = document.createElement("button"); b.className = "mini"; b.textContent = label; b.onclick = fn; a.appendChild(b); };
-    mk("💾 Save (⌘S)", () => save());
-    mk("Cancel", () => showPreview(r));
+    actionButton(a, "Cancel", "Discard changes (Esc)", () => showPreview(r));
+    actionButton(a, "Save", "Save to the remote (⌘S)", () => save()).classList.add("accent");
     ta.addEventListener("keydown", (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); save(); }
       if (e.key === "Tab") { e.preventDefault(); const s = ta.selectionStart; ta.setRangeText("    ", s, ta.selectionEnd, "end"); }
@@ -452,9 +464,8 @@
     const ac = new AbortController();
     S.follow = { ac, path: r.path };
     const a = $("previewActions"); a.innerHTML = "";
-    const mk = (label, title, fn) => { const b = document.createElement("button"); b.className = "mini"; b.textContent = label; b.title = title; b.onclick = fn; a.appendChild(b); };
-    mk("⏹ Stop", "Stop following", () => showPreview(r));
-    mk("⧉", "Copy remote path", () => copy(r.path));
+    actionButton(a, "Stop", "Stop following", () => showPreview(r), "stop");
+    actionButton(a, "", "Copy remote path", () => copy(r.path), "copy");
     streamApi({ kind: "tail", path: r.path, lines: 500 }, (m) => {
       const t = m.o || m.e;
       if (!t) return;
@@ -491,7 +502,7 @@
       S.sel.clear(); S.cursor = -1;
       render();
       const what = s.mode === "content" ? "lines containing" : "names matching";
-      $("searchSummary").innerHTML = `${d.results.length}${d.truncated ? "+" : ""} ${what} <b>${esc(s.query)}</b> under <code>${esc(tilde(s.root))}</code>${d.timedOut ? " — <i>timed out, partial results</i>" : ""}`;
+      $("searchSummary").innerHTML = `${d.results.length}${d.truncated ? "+" : ""} ${what} <b>${esc(s.query)}</b> under <code>${esc(tilde(s.root))}</code>${d.timedOut ? " (timed out, partial results)" : ""}`;
       $("searchBanner").classList.remove("hidden");
       if (S.rows.length) setCursor(0, { preview: false });
     } catch (e) { toast(e.message, "bad"); }
@@ -527,7 +538,7 @@
   }
 
   async function pickAndUpload(kind) {
-    if (S.info.platform !== "darwin") return toast("Native picker is macOS-only — drag & drop files instead", "bad");
+    if (S.info.platform !== "darwin") return toast("The file picker only works on macOS. Drag files onto the window instead.", "bad");
     try {
       const { paths } = await api("/api/pick", { method: "POST", body: { kind } });
       if (!paths.length) return;
@@ -543,7 +554,7 @@
   const staging = new Map();
   function uploadBrowserFiles(files) {
     files = [...files].filter((f) => f.size > 0 || f.type !== "");
-    if (!files.length) return toast("Folders can't be dropped from the browser — use “Upload folder”.", "bad");
+    if (!files.length) return toast("Folders can't be dropped from the browser. Use Upload › Folder instead.", "bad");
     if (!confirmOverwrite(files.map((f) => f.name))) return;
     const dir = S.cwd;
     showTab("transfers");
@@ -632,10 +643,10 @@
       const { items, root } = await api("/api/trash");
       if (!items.length) { el.innerHTML = `<div class="jobs-empty">The trash is empty. Deleted items go to <code>${esc(tilde(root))}</code> on ${esc(S.info.host)}.</div>`; return; }
       el.innerHTML = `<table class="grid"><thead><tr><th>Original location</th><th>Deleted</th><th></th></tr></thead><tbody>` +
-        items.map((it) => `<tr><td class="mono">${it.d ? "📁 " : ""}${esc(tilde(it.path))}</td><td class="mono">${fmtDate(it.ts)}</td>
-          <td class="acts"><button class="mini" data-restore="${esc(it.id)}">Restore</button> <button class="mini danger" data-purge="${esc(it.id)}">Delete</button></td></tr>`).join("") +
+        items.map((it) => `<tr><td class="mono">${ic(it.d ? "folder" : "file", "fi" + (it.d ? " t-dir" : ""))}${esc(tilde(it.path))}</td><td class="mono">${fmtDate(it.ts)}</td>
+          <td class="acts"><button data-restore="${esc(it.id)}">Restore</button> <button class="danger" data-purge="${esc(it.id)}">Delete</button></td></tr>`).join("") +
         `</tbody></table>`;
-    } catch (e) { el.innerHTML = `<div class="jobs-empty">⚠ ${esc(e.message)}</div>`; }
+    } catch (e) { el.innerHTML = `<div class="jobs-empty error">${esc(e.message)}</div>`; }
   }
   $("trashList").addEventListener("click", async (e) => {
     const t = e.target;
@@ -660,7 +671,7 @@
   function updatePasteBtn() {
     const on = S.clip && S.clip.host === S.info?.host;
     $("btnPaste").classList.toggle("hidden", !on);
-    if (on) $("btnPaste").textContent = `Paste ${S.clip.paths.length} (${S.clip.mode === "cut" ? "move" : "copy"})`;
+    if (on) $("pasteLabel").textContent = `Paste ${S.clip.paths.length} ${S.clip.paths.length === 1 ? "item" : "items"}`;
   }
   async function paste(dest = S.cwd) {
     if (!S.clip || S.clip.host !== S.info.host) return toast("Nothing to paste: copy (⌘C) or cut (⌘X) first");
@@ -710,15 +721,15 @@
       if (!d.available) { el.innerHTML = `<div class="jobs-empty">Slurm (squeue) is not available on ${esc(S.info.host)}.</div>`; return; }
       const jobs = d.jobs || [];
       $("slurmBadge").textContent = jobs.length; $("slurmBadge").classList.toggle("hidden", !jobs.length);
-      if (d.error) el.innerHTML = `<div class="jobs-empty">⚠ ${esc(d.error)}</div>`;
+      if (d.error) el.innerHTML = `<div class="jobs-empty error">${esc(d.error)}</div>`;
       else if (!jobs.length) el.innerHTML = `<div class="jobs-empty">No jobs in the queue (squeue --me). Right-click a job script and choose “Submit with sbatch”.</div>`;
       else el.innerHTML = `<table class="grid"><thead><tr><th>Job ID</th><th>Name</th><th>Partition</th><th>State</th><th>Time</th><th>Limit</th><th>Nodes</th><th>Reason / nodes</th><th>Account</th><th></th></tr></thead><tbody>` +
         jobs.map((j) => `<tr><td class="mono">${esc(j.id)}</td><td>${esc(j.name)}</td><td class="mono">${esc(j.partition)}</td>
           <td><span class="state st-${esc(j.state.toLowerCase())}">${esc(j.state)}</span></td><td class="mono">${esc(j.time)}</td><td class="mono">${esc(j.limit)}</td>
           <td class="mono">${esc(j.nodes)}</td><td class="mono">${esc(j.reason)}</td><td class="mono">${esc(j.account)}</td>
-          <td class="acts"><button class="mini" data-log="${esc(j.id)}" title="Follow the job's output file">Log</button> <button class="mini" data-dir="${esc(j.workdir)}" title="Open the job's working folder">Folder</button> <button class="mini danger" data-scancel="${esc(j.id)}" data-name="${esc(j.name)}">Cancel</button></td></tr>`).join("") +
+          <td class="acts"><button data-log="${esc(j.id)}" title="Follow the job's output file">Log</button> <button data-dir="${esc(j.workdir)}" title="Open the job's working folder">Folder</button> <button class="danger" data-scancel="${esc(j.id)}" data-name="${esc(j.name)}">Cancel</button></td></tr>`).join("") +
         `</tbody></table>`;
-    } catch (e) { el.innerHTML = `<div class="jobs-empty">⚠ ${esc(e.message)}</div>`; }
+    } catch (e) { el.innerHTML = `<div class="jobs-empty error">${esc(e.message)}</div>`; }
     if (!$("tab-slurm").classList.contains("hidden") && !$("bottom").classList.contains("collapsed")) slurmTimer = setTimeout(loadSlurm, 15000);
   }
   $("slurmJobs").addEventListener("click", async (e) => {
@@ -752,7 +763,7 @@
     try {
       lastQuota = await api("/api/quota");
       $("quota").innerHTML = lastQuota.items.length ? lastQuota.items.map(quotaBar).join("") : `<div class="muted">No quota information.</div>`;
-    } catch (e) { $("quota").innerHTML = `<div class="muted">⚠ ${esc(e.message)}</div>`; }
+    } catch (e) { $("quota").innerHTML = `<div class="muted error">${esc(e.message)}</div>`; }
   }
   async function loadUsage() {
     const el = $("usage");
@@ -760,11 +771,11 @@
     await loadQuota();
     let bill;
     try { bill = await api("/api/billing"); } catch (e) { bill = { error: e.message, accounts: [] }; }
-    const accts = (bill.accounts || []).map((a) => `<button class="mini" data-acct="${esc(a.name)}" title="billing -a ${esc(a.name)}">${esc(a.name)}${a.arch ? ` · ${a.arch}` : ""}</button>`).join(" ");
+    const accts = (bill.accounts || []).map((a) => `<button data-acct="${esc(a.name)}" title="billing -a ${esc(a.name)}">${esc(a.name)}${a.arch ? `<span class="arch">${a.arch}</span>` : ""}</button>`).join(" ");
     el.innerHTML = `<div class="usage-col"><h4>Storage quota</h4>${lastQuota && lastQuota.items.length ? lastQuota.items.map(quotaBar).join("") : ""}
         <pre class="raw">${esc(lastQuota?.raw || "")}</pre></div>
       <div class="usage-col"><h4>Compute billing</h4>
-        ${bill.error ? `<div class="muted">⚠ ${esc(bill.error)}</div>` : bill.available ? `<pre class="raw">${esc(bill.output || "(no output)")}</pre>` : `<div class="muted">The <code>billing</code> command is not available on ${esc(S.info.host)}.</div>`}
+        ${bill.error ? `<div class="muted error">${esc(bill.error)}</div>` : bill.available ? `<pre class="raw">${esc(bill.output || "(no output)")}</pre>` : `<div class="muted">The <code>billing</code> command is not available on ${esc(S.info.host)}.</div>`}
         ${accts ? `<div class="acct-row"><span class="muted">Usage per user (account suffix: a = ARM, x = x86, g = GPU):</span> ${accts}</div>` : ""}
         <pre class="raw" id="acctOut"></pre></div>`;
   }
@@ -773,7 +784,7 @@
     if (!a) return;
     $("acctOut").textContent = `billing -a ${a} …`;
     try { const d = await api("/api/billing", { params: { account: a } }); $("acctOut").textContent = d.output || "(no output)"; }
-    catch (er) { $("acctOut").textContent = "⚠ " + er.message; }
+    catch (er) { $("acctOut").textContent = er.message; }
   });
   $("btnQuotaRefresh").onclick = loadQuota;
   $("btnUsage").onclick = () => showTab("usage");
@@ -798,7 +809,7 @@
   }
 
   // ------------------------------------------------------------------ jobs
-  const JOB_ICON = { upload: "⬆", download: "⬇", copy: "⧉", move: "➜" };
+  const JOB_ICON = { upload: "upload", download: "download", copy: "copy", move: "fwd" };
   const JOB_DONE = { upload: "Uploaded", download: "Downloaded", copy: "Copied", move: "Moved" };
   let pollHandle = null;
   // Register jobs the moment they are created, so one that finishes before the next poll
@@ -836,16 +847,16 @@
       const rate = elapsed > 0 && j.done ? fmtSize(j.done / elapsed) + "/s" : "";
       const stat = j.status === "running" ? (j.total ? `${pct.toFixed(0)}% · ${rate}` : rate || "…") : j.status;
       const actions = j.status === "running" && !String(j.id).startsWith("stg-")
-        ? `<button class="mini" data-cancel="${j.id}">Cancel</button>`
-        : j.status === "done" && j.kind === "download" ? `<button class="mini" data-reveal="${esc(j.dest)}">Show</button>`
-        : j.status === "done" ? `<button class="mini" data-goto="${esc(j.dest)}">Go to</button>`
-        : (j.status === "error" || j.status === "cancelled") && j.resumable ? `<button class="mini" data-resume="${j.id}" title="Continue with rsync, keeping what was already transferred">Resume</button>` : "";
+        ? `<button data-cancel="${j.id}">Cancel</button>`
+        : j.status === "done" && j.kind === "download" ? `<button data-reveal="${esc(j.dest)}">Show</button>`
+        : j.status === "done" ? `<button data-goto="${esc(j.dest)}">Go to</button>`
+        : (j.status === "error" || j.status === "cancelled") && j.resumable ? `<button data-resume="${j.id}" title="Continue with rsync, keeping what was already transferred">Resume</button>` : "";
       return `<div class="job ${j.status}">
-        <span>${JOB_ICON[j.kind] || "•"}</span>
+        ${ic(JOB_ICON[j.kind] || "file")}
         <span class="lbl">${esc(j.label)}${j.method ? `<span class="tag">${esc(j.method)}</span>` : ""}<span class="dst">${esc(j.kind === "download" ? tilde2(j.dest) : j.dest)}</span></span>
         <div class="bar ${indet ? "indet" : ""}"><div style="width:${j.status === "done" ? 100 : pct}%"></div></div>
         <span class="stat">${fmtSize(j.done)}${j.total ? " / " + fmtSize(j.total) : ""}<br>${stat}</span>
-        <span>${actions}</span>
+        <span class="act">${actions}</span>
         ${j.error ? `<span class="err">${esc(j.error)}</span>` : ""}
         ${j.warning ? `<span class="warn">${esc(j.warning)}</span>` : ""}
       </div>`;
@@ -924,7 +935,6 @@
     $("btnSlurmRefresh").classList.toggle("hidden", name !== "slurm");
     $("btnEmptyTrash").classList.toggle("hidden", name !== "trash");
     $("bottom").classList.remove("collapsed");
-    $("btnToggleBottom").textContent = "▾";
     if (name === "console") $("consoleInput").focus();
     if (name === "slurm") loadSlurm();
     if (name === "usage") loadUsage();
@@ -932,8 +942,7 @@
   }
   document.querySelectorAll(".tab").forEach((t) => (t.onclick = () => showTab(t.dataset.tab)));
   $("btnToggleBottom").onclick = () => {
-    const c = $("bottom").classList.toggle("collapsed");
-    $("btnToggleBottom").textContent = c ? "▴" : "▾";
+    $("bottom").classList.toggle("collapsed");
   };
   $("btnClearJobs").onclick = async () => { await api("/api/jobs/clear", { method: "POST", body: {} }); pollJobs(); };
 
@@ -954,9 +963,9 @@
     b.forEach((bm, i) => {
       const li = document.createElement("li");
       li.dataset.path = bm.path; li.title = bm.path;
-      li.innerHTML = `<span>${bm.path === S.info.home ? "🏠" : "📁"}</span><span class="bm-name">${esc(bm.name)}</span><span class="x" title="Remove">✕</span>`;
+      li.innerHTML = `${ic(bm.path === S.info.home ? "home" : bm.path === "/" ? "server" : "folder")}<span class="bm-name">${esc(bm.name)}</span><button class="x" title="Remove bookmark">${ic("x", "sm")}</button>`;
       li.onclick = (e) => {
-        if (e.target.classList.contains("x")) { b.splice(i, 1); saveBookmarks(b); renderBookmarks(); return; }
+        if (e.target.closest(".x")) { b.splice(i, 1); saveBookmarks(b); renderBookmarks(); return; }
         go(bm.path);
       };
       ul.appendChild(li);
@@ -1033,9 +1042,9 @@
       else items.push(["Preview", "Space", () => showPreview(r, { line: r.line })]);
       if (S.search) items.push(["Show in folder", "", () => go(parent(r.path), { select: r.path })]);
       items.push(null);
-      items.push([`Download ${rows.length > 1 ? rows.length + " items " : ""}to Mac`, "D", () => download(rows)]);
+      items.push([`Download${rows.length > 1 ? " " + rows.length + " items" : ""}`, "D", () => download(rows)]);
       items.push(["Download as one .tar.gz", "", () => download(rows, "archive")]);
-      if (S.info.rsync?.enabled) items.push(["Sync to Mac (rsync, resumable)", "", () => download(rows, "sync")]);
+      if (S.info.rsync?.enabled) items.push(["Sync to this computer (rsync)", "", () => download(rows, "sync")]);
       if (!r.d) items.push(["Save as… (browser)", "", () => (location.href = rawUrl(r.path, true))]);
       if (!r.d) items.push(["Follow (tail -F)", "", () => startFollow(r)]);
       if (!r.d && SCRIPT_EXT.includes((r.name.split(".").pop() || "").toLowerCase())) items.push(["Submit with sbatch", "", () => submitJob(r)]);
@@ -1056,11 +1065,23 @@
         items.push(["Delete permanently", "⇧Del", () => deleteSel(true), "danger"]);
       }
     }
+    openMenu(items, e.clientX, e.clientY);
+  });
+  const MENU_ICON = [
+    [/^(Open parent|Open$)/, "folder"], [/^Preview/, "file-text"], [/^Show in folder/, "folder"],
+    [/^Download as one/, "archive"], [/^Download/, "download"], [/^Sync/, "refresh"], [/^Save as/, "file"],
+    [/^Follow/, "play"], [/^Submit/, "server"], [/^Copy path|^Copy scp/, "copy"], [/^Copy$/, "copy"], [/^Cut/, "cut"],
+    [/^Paste/, "paste"], [/^Open in Terminal/, "terminal"], [/^Open in VS Code/, "code"], [/^Bookmark/, "bookmark"],
+    [/^Search/, "search"], [/^Rename/, "pencil"], [/^Move to trash|^Delete/, "trash"],
+    [/^Files/, "upload"], [/^Folder/, "folder"], [/^File$/, "file"],
+  ];
+  function openMenu(items, x, y) {
     const m = $("ctxMenu"); m.innerHTML = "";
     items.forEach((it) => {
       if (!it) { m.appendChild(document.createElement("hr")); return; }
       const d = document.createElement("div");
-      d.innerHTML = `<span>${esc(it[0])}</span><small>${esc(it[1])}</small>`;
+      const iconName = (MENU_ICON.find(([re]) => re.test(it[0])) || [])[1];
+      d.innerHTML = `${iconName ? ic(iconName) : `<svg class="ic"></svg>`}<span>${esc(it[0])}</span><small>${esc(it[1])}</small>`;
       if (it[3]) d.className = it[3];
       d.onclick = () => { hideCtx(); it[2](); };
       m.appendChild(d);
@@ -1068,17 +1089,29 @@
     m.classList.remove("hidden");
     const { innerWidth: W, innerHeight: H } = window;
     const rect = m.getBoundingClientRect();
-    m.style.left = Math.min(e.clientX, W - rect.width - 8) + "px";
-    m.style.top = Math.min(e.clientY, H - rect.height - 8) + "px";
-  });
+    m.style.left = Math.max(8, Math.min(x, W - rect.width - 8)) + "px";
+    m.style.top = Math.max(8, Math.min(y, H - rect.height - 8)) + "px";
+  }
+  function menuButton(id, items) {
+    $(id).onclick = (e) => {
+      e.stopPropagation();  // the document click handler would close it again
+      const r = $(id).getBoundingClientRect();
+      openMenu(typeof items === "function" ? items() : items, r.left, r.bottom + 4);
+    };
+  }
   const hideCtx = () => $("ctxMenu").classList.add("hidden");
   document.addEventListener("click", (e) => { if (!e.target.closest("#ctxMenu")) hideCtx(); });
 
   // ------------------------------------------------------------------ keyboard
+  const shortcuts = (on) => $("shortcuts").classList.toggle("hidden", !on);
+  $("btnShortcuts").onclick = () => shortcuts(true);
+  $("btnCloseShortcuts").onclick = () => shortcuts(false);
+  $("shortcuts").addEventListener("click", (e) => { if (e.target.id === "shortcuts") shortcuts(false); });
   const typing = () => { const a = document.activeElement; return a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT"); };
   document.addEventListener("keydown", (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "l") { e.preventDefault(); editPath(); return; }
-    if (e.key === "Escape") hideCtx();
+    if (e.key === "Escape") { hideCtx(); shortcuts(false); }
+    if (!$("shortcuts").classList.contains("hidden")) return;
     if (typing()) {
       if (e.key === "Escape" && document.activeElement === $("filterInput")) { $("filterInput").blur(); $("tableWrap").focus(); }
       if ((e.key === "ArrowDown" || e.key === "Enter") && document.activeElement === $("filterInput")) { e.preventDefault(); $("tableWrap").focus(); if (e.key === "Enter" && S.rows.length) setCursor(S.rows[0]?.up && S.rows.length > 1 ? 1 : 0); }
@@ -1103,6 +1136,7 @@
       case "Delete": e.preventDefault(); deleteSel(e.shiftKey); break;
       case "`": e.preventDefault(); showTab("console"); break;
       case "~": e.preventDefault(); go(S.info.home); break;
+      case "?": e.preventDefault(); shortcuts(true); break;
       default:
         if (e.metaKey || e.ctrlKey) {
           if (e.key.toLowerCase() === "a") { e.preventDefault(); S.rows.forEach((x) => !x.up && S.sel.add(x.path)); paintRows(); }
@@ -1140,14 +1174,15 @@
   $("btnUp").onclick = () => go(parent(S.cwd));
   $("btnHome").onclick = () => go(S.info.home);
   $("btnRefresh").onclick = refresh;
-  $("btnUploadFiles").onclick = () => pickAndUpload("file");
-  $("btnUploadDir").onclick = () => pickAndUpload("dir");
-  $("btnDownload").onclick = () => download(targetRows());
-  $("btnNewFolder").onclick = newFolder;
-  $("btnNewFile").onclick = newFile;
+  menuButton("btnUploadMenu", [["Files…", "", () => pickAndUpload("file")], ["Folder…", "", () => pickAndUpload("dir")]]);
+  menuButton("btnDownloadMenu", () => [
+    ["Download", "D", () => download(targetRows())],
+    ["Download as one .tar.gz", "", () => download(targetRows(), "archive")],
+    ...(S.info?.rsync?.enabled ? [["Sync to this computer (rsync)", "", () => download(targetRows(), "sync")]] : []),
+  ]);
+  menuButton("btnNewMenu", [["Folder", "", newFolder], ["File", "", newFile]]);
   $("btnRename").onclick = renameSel;
   $("btnDelete").onclick = (e) => deleteSel(e.shiftKey);
-  $("btnArchive").onclick = () => download(targetRows(), "archive");
   $("btnPaste").onclick = () => paste();
   $("btnSizes").onclick = measureSizes;
   $("btnOpenTerm").onclick = () => openInTerminal(S.cwd);
@@ -1202,7 +1237,7 @@
       e.preventDefault(); depth = 0; $("dropOverlay").classList.add("hidden");
       const items = [...(e.dataTransfer.items || [])];
       if (items.some((it) => it.webkitGetAsEntry && it.webkitGetAsEntry()?.isDirectory)) {
-        toast("Folders can't be dropped from the browser — use “⬆ Upload folder” (native picker, scp -r).", "bad");
+        toast("Folders can't be dropped from the browser. Use Upload › Folder instead.", "bad");
       }
       const files = items.filter((it) => !(it.webkitGetAsEntry && it.webkitGetAsEntry()?.isDirectory)).map((it) => it.getAsFile()).filter(Boolean);
       if (files.length) uploadBrowserFiles(files);
@@ -1213,14 +1248,13 @@
   async function applyInfo(info) {
     S.info = info;
     if (!info.connected) {
-      $("hostLabel").textContent = `${info.host}: ${info.error || "disconnected"}`;
+      $("hostText").textContent = `${info.host}: ${info.error || "disconnected"}`;
       $("connDot").className = "dot bad";
       return;
     }
     $("connDot").className = "dot ok";
-    $("hostLabel").textContent = `${info.user}@${info.host} ▾`;
-    $("hostLabel").title = `${info.hostname} — click to switch SSH host`;
-    $("hostLabel").style.cursor = "pointer";
+    $("hostText").textContent = `${info.user}@${info.host}`;
+    $("hostLabel").title = `${info.hostname}: click to switch SSH host`;
     $("dlDir").textContent = tilde2(info.download_dir);
     renderXferMode();
     if (S.clip && S.clip.host !== info.host) S.clip = null;
@@ -1239,7 +1273,7 @@
     const hosts = (S.info?.hosts || []).join(", ");
     const next = prompt(`Switch SSH host (from ~/.ssh/config: ${hosts}):`, S.info?.host || "deucalion");
     if (!next || next.trim() === S.info?.host) return;
-    $("hostLabel").textContent = `connecting to ${next.trim()}…`;
+    $("hostText").textContent = `connecting to ${next.trim()}…`;
     $("connDot").className = "dot";
     busy(true);
     try {
@@ -1254,13 +1288,13 @@
   };
 
   async function boot() {
-    if (!TOKEN) { document.body.innerHTML = `<div class="placeholder" style="padding:60px;text-align:center">Missing access token — open the URL printed by <code>server.py</code>.</div>`; return; }
+    if (!TOKEN) { document.body.innerHTML = `<div class="placeholder" style="padding:60px;text-align:center">Missing access token. Open the URL printed by <code>server.py</code>.</div>`; return; }
     try {
       await api("/api/session", { method: "POST", body: {} });  // cookie for <img>/<video>/download URLs
       const info = await api("/api/info");
       await applyInfo(info);
     } catch (e) {
-      $("hostLabel").textContent = "error: " + e.message; $("connDot").className = "dot bad"; return;
+      $("hostText").textContent = "error: " + e.message; $("connDot").className = "dot bad"; return;
     }
     pollJobs();
   }
